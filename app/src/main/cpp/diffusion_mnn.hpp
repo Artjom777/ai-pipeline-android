@@ -33,7 +33,7 @@ std::string vaeModelPath;
 void tokenizePrompt(const std::string& prompt, std::vector<int32_t>& tokens);
 bool runTextEncoder(const std::vector<int32_t>& tokens, std::vector<float>& context);
 bool runUNetStep(const std::vector<float>& latents, float timestep, const std::vector<float>& context, std::vector<float>& noisePred);
-bool runVaeDecoder(const std::vector<float>& latents, std::vector<uint8_t>& outRgb512);
+bool runVaeDecoder(const std::vector<float>& latents, std::vector<uint8_t>& outRgb512, const std::string& prompt);
 void runEulerALCMSchedulerStep(std::vector<float>& latents, const std::vector<float>& noisePred, int stepIndex, int totalSteps);
 };
 #endif
