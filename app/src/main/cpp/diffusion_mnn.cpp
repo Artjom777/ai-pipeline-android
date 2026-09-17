@@ -8,18 +8,33 @@
 #include <cstdio>
 #include <cctype>
 #include <map>
-static std::string findModelFile(const std::vector<std::string>& dirs, const std::string& fileName){
-for(const auto& d:dirs){
-std::string p=d+"/"+fileName;
-FILE* f=fopen(p.c_str(),"rb");
+static bool checkFileExists(const std::string& path){
+if(path.empty())return false;
+FILE* f=fopen(path.c_str(),"rb");
 if(f){
 fclose(f);
-return p;
+return true;
 }
+return false;
+}
+static std::string resolveModelPath(const std::string& providedPath, const std::string& fallbackDir, const std::string& fileName){
+if(checkFileExists(providedPath))return providedPath;
+std::vector<std::string> candidates={
+fallbackDir+"/"+fileName,
+"/data/local/tmp/models/"+fileName,
+"/sdcard/models/"+fileName,
+"/sdcard/ai_models/"+fileName
+};
+for(const auto& p:candidates){
+if(checkFileExists(p))return p;
 }
 return "";
 }
 static bool createMnnSession(const std::string& path, std::unique_ptr<MNN::Interpreter>& net, MNN::Session*& session){
+if(!checkFileExists(path)){
+LOGE("Cannot create session, model file does not exist: %s", path.c_str());
+return false;
+}
 net.reset(MNN::Interpreter::createFromFile(path.c_str()));
 if(!net){
 LOGE("Failed to create MNN Interpreter from %s", path.c_str());
@@ -34,33 +49,49 @@ backendConfig.power=MNN::BackendConfig::Power_High;
 scheduleConfig.backendConfig=&backendConfig;
 session=net->createSession(scheduleConfig);
 if(!session){
-LOGW("OpenCL session creation failed for %s, falling back to CPU", path.c_str());
+LOGW("OpenCL session creation failed for %s, falling back to CPU backend (MNN_FORWARD_CPU)", path.c_str());
 scheduleConfig.type=MNN_FORWARD_CPU;
 session=net->createSession(scheduleConfig);
+if(session){
+LOGI("Successfully created CPU fallback session for %s", path.c_str());
+}
+}else{
+LOGI("Successfully created OpenCL session for %s", path.c_str());
 }
 if(!session){
-LOGE("Failed to create session for %s", path.c_str());
+LOGE("Failed to create both OpenCL and CPU session for %s", path.c_str());
 return false;
 }
 return true;
 }
 DiffusionMNNPipeline::DiffusionMNNPipeline():initialized(false),latentW(64),latentH(64),latentC(4),sessionText(nullptr),sessionUNet(nullptr),sessionVae(nullptr){}
 DiffusionMNNPipeline::~DiffusionMNNPipeline(){releaseSessionAndOpenCL();}
-bool DiffusionMNNPipeline::initialize(const std::string& modelDir){
+bool DiffusionMNNPipeline::initialize(const std::string& modelDir, const std::string& unetPath, const std::string& vaePath, const std::string& textEncoderPath){
 modelsPath=modelDir;
 LOGI("Initializing MNN diffusion pipeline with OpenCL backend (MNN_OPENCL=ON, MNN_LOW_MEMORY=ON)");
-std::vector<std::string> searchDirs={modelDir,"/data/local/tmp/models","/sdcard/models","/sdcard/ai_models"};
-textModelPath=findModelFile(searchDirs,"text_encoder.mnn");
-unetModelPath=findModelFile(searchDirs,"unet.mnn");
-vaeModelPath=findModelFile(searchDirs,"vae_decoder.mnn");
-if(textModelPath.empty()||unetModelPath.empty()||vaeModelPath.empty()){
-LOGE("MNN models not found: text_encoder='%s', unet='%s', vae='%s'", textModelPath.c_str(), unetModelPath.c_str(), vaeModelPath.c_str());
+unetModelPath=resolveModelPath(unetPath,modelDir,"unet.mnn");
+vaeModelPath=resolveModelPath(vaePath,modelDir,"vae_decoder.mnn");
+textModelPath=resolveModelPath(textEncoderPath,modelDir,"text_encoder.mnn");
+if(unetModelPath.empty()||vaeModelPath.empty()||textModelPath.empty()){
+LOGE("MNN models not found: unet='%s', vae='%s', text='%s'", unetModelPath.c_str(), vaeModelPath.c_str(), textModelPath.c_str());
 initialized=false;
 return false;
 }
-if(!createMnnSession(textModelPath,netText,sessionText))return false;
-if(!createMnnSession(unetModelPath,netUNet,sessionUNet))return false;
-if(!createMnnSession(vaeModelPath,netVae,sessionVae))return false;
+if(!createMnnSession(textModelPath,netText,sessionText)){
+LOGE("Failed to initialize text_encoder session from %s", textModelPath.c_str());
+initialized=false;
+return false;
+}
+if(!createMnnSession(unetModelPath,netUNet,sessionUNet)){
+LOGE("Failed to initialize unet session from %s", unetModelPath.c_str());
+initialized=false;
+return false;
+}
+if(!createMnnSession(vaeModelPath,netVae,sessionVae)){
+LOGE("Failed to initialize vae_decoder session from %s", vaeModelPath.c_str());
+initialized=false;
+return false;
+}
 initialized=true;
 LOGI("All MNN diffusion models loaded and sessions initialized successfully");
 return true;

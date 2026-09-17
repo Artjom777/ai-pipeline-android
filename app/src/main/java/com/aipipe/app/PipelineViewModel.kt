@@ -1,7 +1,9 @@
 package com.aipipe.app
+import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +14,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 enum class PipelineStep {
 IDLE,
 STAGE_1_DIFFUSION,
@@ -37,20 +41,70 @@ val enableLanczosFallback: Boolean = true,
 val remainingSeconds: Int = 30
 )
 class PipelineViewModel(
+application: Application,
 private val bridge: NativePipelineBridge = NativePipelineBridge()
-) : ViewModel() {
+) : AndroidViewModel(application) {
 private val _uiState = MutableStateFlow(PipelineUiState())
 val uiState: StateFlow<PipelineUiState> = _uiState.asStateFlow()
 private var timerJob: Job? = null
 init {
-viewModelScope.launch(Dispatchers.Default) {
+viewModelScope.launch(Dispatchers.IO) {
 try {
-bridge.nativeInit("/data/local/tmp/models")
+val context = getApplication<Application>().applicationContext
+val unet = extractModelIfMissing(context, "unet.mnn")
+val vae = extractModelIfMissing(context, "vae_decoder.mnn")
+val text = extractModelIfMissing(context, "text_encoder.mnn")
+val unetPath = resolvePath(unet, "unet.mnn")
+val vaePath = resolvePath(vae, "vae_decoder.mnn")
+val textPath = resolvePath(text, "text_encoder.mnn")
+val ok = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
+if (ok) {
+Log.i("AI_PIPE", "Native pipeline initialized successfully on startup")
+_uiState.update { it.copy(statusMessage = "Модели MNN загружены") }
+} else {
+Log.w("AI_PIPE", "Native pipeline awaiting models: unet=$unetPath, vae=$vaePath, text=$textPath")
+_uiState.update { it.copy(statusMessage = "Готов к запуску") }
+}
 } catch (t: Throwable) {
 Log.e("AI_PIPE", "Failed to initialize native pipeline", t)
 _uiState.update { it.copy(errorMessage = "Ошибка инициализации: ${t.message}") }
 }
 }
+}
+private fun extractModelIfMissing(context: Context, fileName: String): File {
+val targetFile = File(context.filesDir, fileName)
+if (!targetFile.exists() || targetFile.length() == 0L) {
+try {
+context.assets.open(fileName).use { input ->
+FileOutputStream(targetFile).use { output ->
+val buffer = ByteArray(65536)
+var read: Int
+while (input.read(buffer).also { read = it } != -1) {
+output.write(buffer, 0, read)
+}
+output.flush()
+}
+}
+Log.i("AI_PIPE", "Extracted asset $fileName to ${targetFile.absolutePath}")
+} catch (e: Exception) {
+Log.w("AI_PIPE", "Asset $fileName not found in assets: ${e.message}")
+}
+}
+return targetFile
+}
+private fun resolvePath(internalFile: File, fileName: String): String {
+if (internalFile.exists() && internalFile.length() > 0L) {
+return internalFile.absolutePath
+}
+val tmpFile = File("/data/local/tmp/models", fileName)
+if (tmpFile.exists() && tmpFile.length() > 0L) {
+return tmpFile.absolutePath
+}
+val sdFile = File("/sdcard/models", fileName)
+if (sdFile.exists() && sdFile.length() > 0L) {
+return sdFile.absolutePath
+}
+return internalFile.absolutePath
 }
 fun onPromptChanged(newPrompt: String) {
 _uiState.update { it.copy(prompt = newPrompt) }
@@ -93,8 +147,29 @@ left--
 _uiState.update { it.copy(remainingSeconds = left) }
 }
 }
-viewModelScope.launch(Dispatchers.Default) {
+viewModelScope.launch(Dispatchers.IO) {
 try {
+val context = getApplication<Application>().applicationContext
+val unet = extractModelIfMissing(context, "unet.mnn")
+val vae = extractModelIfMissing(context, "vae_decoder.mnn")
+val text = extractModelIfMissing(context, "text_encoder.mnn")
+val unetPath = resolvePath(unet, "unet.mnn")
+val vaePath = resolvePath(vae, "vae_decoder.mnn")
+val textPath = resolvePath(text, "text_encoder.mnn")
+val initOk = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
+if (!initOk) {
+timerJob?.cancel()
+val msg = "Файлы моделей не найдены: unet.mnn, vae_decoder.mnn, text_encoder.mnn"
+Log.e("AI_PIPE", msg)
+_uiState.update {
+it.copy(
+isRunning = false,
+step = PipelineStep.ERROR,
+errorMessage = msg
+)
+}
+return@launch
+}
 val bmp512 = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
 val bmpFinal = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
 val callback = object : PipelineCallback {
@@ -144,7 +219,7 @@ _uiState.update {
 it.copy(
 isRunning = false,
 step = PipelineStep.ERROR,
-errorMessage = "Ошибка инференса MNN/NCNN"
+errorMessage = "Ошибка инференса MNN/NCNN: проверьте файлы моделей"
 )
 }
 }

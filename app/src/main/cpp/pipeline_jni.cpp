@@ -83,15 +83,25 @@ return true;
 static std::unique_ptr<DiffusionMNNPipeline> sDiffusionPipeline;
 static std::unique_ptr<UpscaleNCNNPipeline> sUpscalePipeline;
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_aipipe_app_NativePipelineBridge_nativeInit(JNIEnv* env,jobject thiz,jstring modelDir_){
-const char* modelDir=env->GetStringUTFChars(modelDir_,nullptr);
-LOGI("Native init requested with modelDir: %s", modelDir);
+Java_com_aipipe_app_NativePipelineBridge_nativeInit(JNIEnv* env,jobject thiz,jstring modelDir_,jstring unetPath_,jstring vaePath_,jstring textEncoderPath_){
+const char* modelDirC=env->GetStringUTFChars(modelDir_,nullptr);
+const char* unetPathC=env->GetStringUTFChars(unetPath_,nullptr);
+const char* vaePathC=env->GetStringUTFChars(vaePath_,nullptr);
+const char* textEncoderPathC=env->GetStringUTFChars(textEncoderPath_,nullptr);
+std::string modelDir=modelDirC?modelDirC:"";
+std::string unetPath=unetPathC?unetPathC:"";
+std::string vaePath=vaePathC?vaePathC:"";
+std::string textEncoderPath=textEncoderPathC?textEncoderPathC:"";
+env->ReleaseStringUTFChars(modelDir_,modelDirC);
+env->ReleaseStringUTFChars(unetPath_,unetPathC);
+env->ReleaseStringUTFChars(vaePath_,vaePathC);
+env->ReleaseStringUTFChars(textEncoderPath_,textEncoderPathC);
+LOGI("Native init: modelDir='%s', unet='%s', vae='%s', text='%s'", modelDir.c_str(), unetPath.c_str(), vaePath.c_str(), textEncoderPath.c_str());
 sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
 sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
-bool mnnOk=sDiffusionPipeline->initialize(modelDir);
+bool mnnOk=sDiffusionPipeline->initialize(modelDir,unetPath,vaePath,textEncoderPath);
 bool ncnnOk=sUpscalePipeline->initialize(modelDir);
-env->ReleaseStringUTFChars(modelDir_,modelDir);
-LOGI("Native engines initialized. MNN OpenCL: %s, NCNN Vulkan: %s", mnnOk?"OK":"FAIL", ncnnOk?"OK":"FAIL");
+LOGI("Native engines initialized. MNN: %s, NCNN: %s", mnnOk?"OK":"FAIL", ncnnOk?"OK":"FAIL");
 return static_cast<jboolean>(mnnOk&&ncnnOk);
 }
 extern "C" JNIEXPORT jobject JNICALL

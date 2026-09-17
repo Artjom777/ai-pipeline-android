@@ -11,7 +11,7 @@ class DiffusionMNNPipeline {
 public:
 DiffusionMNNPipeline();
 ~DiffusionMNNPipeline();
-bool initialize(const std::string& modelDir);
+bool initialize(const std::string& modelDir, const std::string& unetPath, const std::string& vaePath, const std::string& textEncoderPath);
 bool generateImage(const std::string& prompt, std::vector<uint8_t>& outRgb512, IProgressCallback* callback);
 void releaseSessionAndOpenCL();
 bool isInitialized() const;

@@ -32,7 +32,7 @@ throw e
 }
 }
 }
-external fun nativeInit(modelDir: String): Boolean
+external fun nativeInit(modelDir: String, unetPath: String, vaePath: String, textEncoderPath: String): Boolean
 external fun nativeExecutePipeline(
 prompt: String,
 timeoutSec: Int,
