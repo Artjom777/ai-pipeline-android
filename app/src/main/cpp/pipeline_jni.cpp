@@ -3,6 +3,7 @@
 #include "upscale_ncnn.hpp"
 #include <memory>
 #include <cstring>
+#include <algorithm>
 class JNIProgressBridge:public IProgressCallback{
 public:
 JNIProgressBridge(JNIEnv* env,jobject callbackObj):mEnv(env),mCallbackObj(callbackObj){
@@ -24,6 +25,61 @@ JNIEnv* mEnv;
 jobject mCallbackObj;
 jmethodID mMethodId;
 };
+static bool writeBufferToAndroidBitmap(JNIEnv* env,jobject bitmap,const uint8_t* src,int width,int height,int channels){
+if(!bitmap||!src)return false;
+AndroidBitmapInfo info;
+if(AndroidBitmap_getInfo(env,bitmap,&info)<0){
+LOGE("Failed to get AndroidBitmap info");
+return false;
+}
+if(info.format!=ANDROID_BITMAP_FORMAT_RGBA_8888){
+LOGE("AndroidBitmap format is not RGBA_8888: %d", info.format);
+return false;
+}
+void* pixels=nullptr;
+if(AndroidBitmap_lockPixels(env,bitmap,&pixels)<0||!pixels){
+LOGE("Failed to lock AndroidBitmap pixels");
+return false;
+}
+for(int y=0;y<height&&y<static_cast<int>(info.height);++y){
+uint8_t* dstRow=static_cast<uint8_t*>(pixels)+y*info.stride;
+const uint8_t* srcRow=src+y*width*channels;
+for(int x=0;x<width&&x<static_cast<int>(info.width);++x){
+dstRow[x*4+0]=srcRow[x*channels+0];
+dstRow[x*4+1]=srcRow[x*channels+1];
+dstRow[x*4+2]=srcRow[x*channels+2];
+dstRow[x*4+3]=0xFF;
+}
+}
+AndroidBitmap_unlockPixels(env,bitmap);
+return true;
+}
+static bool writeFloatBufferToAndroidBitmap(JNIEnv* env,jobject bitmap,const float* src,int width,int height,int channels,bool bipolar){
+if(!bitmap||!src)return false;
+AndroidBitmapInfo info;
+if(AndroidBitmap_getInfo(env,bitmap,&info)<0)return false;
+if(info.format!=ANDROID_BITMAP_FORMAT_RGBA_8888)return false;
+void* pixels=nullptr;
+if(AndroidBitmap_lockPixels(env,bitmap,&pixels)<0||!pixels)return false;
+for(int y=0;y<height&&y<static_cast<int>(info.height);++y){
+uint8_t* dstRow=static_cast<uint8_t*>(pixels)+y*info.stride;
+const float* srcRow=src+y*width*channels;
+for(int x=0;x<width&&x<static_cast<int>(info.width);++x){
+float r=srcRow[x*channels+0];
+float g=srcRow[x*channels+1];
+float b=srcRow[x*channels+2];
+float rf=bipolar?((r+1.0f)*127.5f):(r*255.0f);
+float gf=bipolar?((g+1.0f)*127.5f):(g*255.0f);
+float bf=bipolar?((b+1.0f)*127.5f):(b*255.0f);
+dstRow[x*4+0]=static_cast<uint8_t>(std::clamp(rf,0.0f,255.0f));
+dstRow[x*4+1]=static_cast<uint8_t>(std::clamp(gf,0.0f,255.0f));
+dstRow[x*4+2]=static_cast<uint8_t>(std::clamp(bf,0.0f,255.0f));
+dstRow[x*4+3]=0xFF;
+}
+}
+AndroidBitmap_unlockPixels(env,bitmap);
+return true;
+}
 static std::unique_ptr<DiffusionMNNPipeline> sDiffusionPipeline;
 static std::unique_ptr<UpscaleNCNNPipeline> sUpscalePipeline;
 extern "C" JNIEXPORT jboolean JNICALL
@@ -58,11 +114,9 @@ LOGE("Stage 1 diffusion failed on Mali OpenCL backend");
 return nullptr;
 }
 if(outBitmap512){
-void* pixels512=nullptr;
-if(AndroidBitmap_lockPixels(env,outBitmap512,&pixels512)>=0&&pixels512){
-std::memcpy(pixels512,rgba512.data(),rgba512.size());
-AndroidBitmap_unlockPixels(env,outBitmap512);
-LOGI("Locked and updated Stage 1 AndroidBitmap 512x512");
+int ch=(rgba512.size()>=static_cast<size_t>(512*512*4))?4:3;
+if(writeBufferToAndroidBitmap(env,outBitmap512,rgba512.data(),512,512,ch)){
+LOGI("Locked and updated Stage 1 AndroidBitmap 512x512 with stride and ARGB_8888 0xFF alpha");
 }
 }
 auto curTime=std::chrono::steady_clock::now();
@@ -81,12 +135,9 @@ LOGE("Stage 2 upscale failed on Mali Vulkan backend");
 return nullptr;
 }
 if(outBitmap4K){
-void* pixels4K=nullptr;
-if(AndroidBitmap_lockPixels(env,outBitmap4K,&pixels4K)>=0&&pixels4K){
-size_t copyBytes=std::min(rgba4K.size(),static_cast<size_t>(targetW*targetH*4));
-std::memcpy(pixels4K,rgba4K.data(),copyBytes);
-AndroidBitmap_unlockPixels(env,outBitmap4K);
-LOGI("Locked and updated Stage 2 AndroidBitmap %dx%d", targetW, targetH);
+int ch=(rgba4K.size()>=static_cast<size_t>(targetW*targetH*4))?4:3;
+if(writeBufferToAndroidBitmap(env,outBitmap4K,rgba4K.data(),targetW,targetH,ch)){
+LOGI("Locked and updated Stage 2 AndroidBitmap %dx%d with stride and ARGB_8888 0xFF alpha", targetW, targetH);
 }
 }
 auto pipelineEnd=std::chrono::steady_clock::now();
