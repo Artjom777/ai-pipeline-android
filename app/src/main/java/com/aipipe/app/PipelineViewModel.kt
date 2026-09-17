@@ -76,9 +76,9 @@ errorMessage = null
 }
 return@launch
 }
-val unetPath = File(context.filesDir, "unet.mnn").absolutePath
-val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
-val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode == 0) {
 Log.i("AI_PIPE", "Native pipeline initialized successfully on startup")
@@ -94,6 +94,17 @@ _uiState.update { it.copy(errorMessage = "Ошибка инициализаци�
 }
 }
 }
+private fun resolveModelFile(context: Context, preferredName: String, altRelPath: String): File {
+val f1 = File(context.filesDir, preferredName)
+if (f1.exists() && f1.length() > 0L) return f1
+val f2 = File(context.filesDir, altRelPath)
+if (f2.exists() && f2.length() > 0L) return f2
+val f3 = File("/data/local/tmp/models", preferredName)
+if (f3.exists() && f3.length() > 0L) return f3
+val f4 = File("/sdcard/models", preferredName)
+if (f4.exists() && f4.length() > 0L) return f4
+return f1
+}
 private fun ensureModelAliases(context: Context) {
 val pairs = listOf(
 Pair("text_encoder/model.fp16.safetensors", "text_encoder.mnn"),
@@ -105,20 +116,38 @@ val origFile = File(context.filesDir, orig)
 val aliasFile = File(context.filesDir, alias)
 if (origFile.exists() && origFile.length() > 0L && (!aliasFile.exists() || aliasFile.length() == 0L)) {
 aliasFile.parentFile?.mkdirs()
+try {
+if (aliasFile.exists()) aliasFile.delete()
+android.system.Os.symlink(origFile.absolutePath, aliasFile.absolutePath)
+} catch (_: Throwable) {
+try {
 origFile.copyTo(aliasFile, overwrite = true)
+} catch (_: Throwable) {}
+}
 } else if (aliasFile.exists() && aliasFile.length() > 0L && (!origFile.exists() || origFile.length() == 0L)) {
 origFile.parentFile?.mkdirs()
+try {
+if (origFile.exists()) origFile.delete()
+android.system.Os.symlink(aliasFile.absolutePath, origFile.absolutePath)
+} catch (_: Throwable) {
+try {
 aliasFile.copyTo(origFile, overwrite = true)
+} catch (_: Throwable) {}
+}
 }
 }
 }
 private fun getMissingModels(context: Context): List<String> {
 ensureModelAliases(context)
-val required = listOf("unet.mnn", "text_encoder.mnn", "vae_decoder.mnn")
-return required.filter { fileName ->
-val f = File(context.filesDir, fileName)
-!f.exists() || f.length() == 0L
-}
+val models = listOf(
+Triple("unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn"),
+Triple("text_encoder.mnn", "text_encoder/model.fp16.safetensors", "text_encoder.mnn"),
+Triple("vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn")
+)
+return models.filter { (pref, alt, _) ->
+val file = resolveModelFile(context, pref, alt)
+!file.exists() || file.length() == 0L
+}.map { it.third }
 }
 private fun extractModelIfMissing(context: Context, fileName: String): File {
 val targetFile = File(context.filesDir, fileName)
@@ -266,8 +295,14 @@ if (!renamed) {
 tmpFile.copyTo(targetFile, overwrite = true)
 tmpFile.delete()
 }
+try {
 if (aliasFile.exists()) aliasFile.delete()
+android.system.Os.symlink(targetFile.absolutePath, aliasFile.absolutePath)
+} catch (_: Throwable) {
+try {
 targetFile.copyTo(aliasFile, overwrite = true)
+} catch (_: Throwable) {}
+}
 completedModels++
 _uiState.update {
 it.copy(
@@ -278,9 +313,9 @@ downloadStatus = "$aliasName сохранён ($completedModels/$totalModels)"
 }
 val missing = getMissingModels(context)
 if (missing.isEmpty()) {
-val unetPath = File(context.filesDir, "unet.mnn").absolutePath
-val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
-val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 _uiState.update {
 it.copy(
@@ -356,19 +391,26 @@ _uiState.update { it.copy(remainingSeconds = left) }
 }
 viewModelScope.launch(Dispatchers.IO) {
 try {
-val unetPath = File(context.filesDir, "unet.mnn").absolutePath
-val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
-val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode != 0) {
 timerJob?.cancel()
-val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
+val curMissing = getMissingModels(context)
+val msg = if (curMissing.isNotEmpty()) {
+"Отсутствуют файлы моделей: ${curMissing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
+} else {
+"Ошибка инициализации MNN (код $initCode)"
+}
 Log.e("AI_PIPE", msg)
 _uiState.update {
 it.copy(
 isRunning = false,
 step = PipelineStep.ERROR,
-errorMessage = msg
+errorMessage = msg,
+modelsMissing = curMissing.isNotEmpty(),
+missingModelsList = curMissing
 )
 }
 return@launch
@@ -422,7 +464,7 @@ _uiState.update {
 it.copy(
 isRunning = false,
 step = PipelineStep.ERROR,
-errorMessage = "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}"
+errorMessage = "Ошибка генерации Stage 1 (MNN)"
 )
 }
 }
