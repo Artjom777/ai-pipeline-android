@@ -8,3 +8,4 @@
 .externalNativeBuild
 .cxx
 download_prebuilts.sh
+build_artifacts/

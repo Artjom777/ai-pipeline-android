@@ -1,7 +1,5 @@
 package com.aipipe.app.ui.theme
-
 import androidx.compose.ui.graphics.Color
-
 val NeonCyan = Color(0xFF00E5FF)
 val NeonPurple = Color(0xFF9D4EDD)
 val NeonGreen = Color(0xFF00E676)
