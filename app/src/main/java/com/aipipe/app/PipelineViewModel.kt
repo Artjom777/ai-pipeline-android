@@ -272,7 +272,7 @@ _uiState.update {
 it.copy(
 downloadProgress = overallProgress.coerceIn(0f, 1f),
 downloadSpeed = speedText,
-downloadStatus = "Скачивание $modelName: ${(fileProgress * 100).toInt()}%\ ${bytesRead / (1024 * 1024)}МБ"
+downloadStatus = "Скачивание $modelName: ${(fileProgress * 100).toInt()}% (${bytesRead / (1024 * 1024)} МБ)"
 )
 }
 }
