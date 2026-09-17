@@ -152,6 +152,15 @@ unfocusedTextColor = TextPrimary
 ),
 shape = RoundedCornerShape(12.dp)
 )
+if (state.errorMessage != null) {
+Text(
+text = state.errorMessage ?: "",
+color = Color.Red,
+fontSize = 12.sp,
+fontWeight = FontWeight.Medium,
+modifier = Modifier.fillMaxWidth()
+)
+}
 Button(
 onClick = { viewModel.startPipeline() },
 enabled = !state.isRunning,
@@ -198,6 +207,22 @@ bitmap4K = state.bitmap4K,
 splitPos = splitPosition,
 onSplitChange = { splitPosition = it }
 )
+if (state.errorMessage != null) {
+Surface(
+shape = RoundedCornerShape(12.dp),
+color = Color(0x33FF0000),
+border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red),
+modifier = Modifier.fillMaxWidth()
+) {
+Text(
+text = state.errorMessage ?: "",
+color = Color.Red,
+fontSize = 13.sp,
+fontWeight = FontWeight.Medium,
+modifier = Modifier.padding(12.dp)
+)
+}
+}
 Surface(
 shape = RoundedCornerShape(12.dp),
 color = CardBackground,
@@ -214,7 +239,7 @@ Text(
 text = state.statusMessage,
 fontSize = 12.sp,
 fontWeight = FontWeight.Medium,
-color = TextPrimary,
+color = if (state.step == PipelineStep.ERROR || state.errorMessage != null) Color.Red else TextPrimary,
 modifier = Modifier.weight(1f)
 )
 Row(

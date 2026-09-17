@@ -49,25 +49,39 @@ init {
 viewModelScope.launch(Dispatchers.IO) {
 try {
 val context = getApplication<Application>().applicationContext
-val unet = extractModelIfMissing(context, "unet.mnn")
-val vae = extractModelIfMissing(context, "vae_decoder.mnn")
-val text = extractModelIfMissing(context, "text_encoder.mnn")
-val unetPath = resolvePath(unet, "unet.mnn")
-val vaePath = resolvePath(vae, "vae_decoder.mnn")
-val textPath = resolvePath(text, "text_encoder.mnn")
+extractModelIfMissing(context, "unet.mnn")
+extractModelIfMissing(context, "text_encoder.mnn")
+extractModelIfMissing(context, "vae_decoder.mnn")
+val missing = getMissingModels(context)
+if (missing.isNotEmpty()) {
+val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
+Log.w("AI_PIPE", msg)
+_uiState.update { it.copy(statusMessage = "Файлы моделей не найдены", errorMessage = msg) }
+return@launch
+}
+val unetPath = File(context.filesDir, "unet.mnn").absolutePath
+val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
+val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode == 0) {
 Log.i("AI_PIPE", "Native pipeline initialized successfully on startup")
-_uiState.update { it.copy(statusMessage = "Модели MNN загружены") }
+_uiState.update { it.copy(statusMessage = "Модели MNN загружены", errorMessage = null) }
 } else {
-val err = if (initCode == -1) "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}" else "Ошибка инициализации MNN (код $initCode)"
+val err = "Ошибка инициализации MNN (код $initCode)"
 Log.w("AI_PIPE", err)
-_uiState.update { it.copy(statusMessage = "Готов к запуску") }
+_uiState.update { it.copy(statusMessage = "Готов к запуску", errorMessage = err) }
 }
 } catch (t: Throwable) {
 Log.e("AI_PIPE", "Failed to initialize native pipeline", t)
 _uiState.update { it.copy(errorMessage = "Ошибка инициализации: ${t.message}") }
 }
+}
+}
+private fun getMissingModels(context: Context): List<String> {
+val required = listOf("unet.mnn", "text_encoder.mnn", "vae_decoder.mnn")
+return required.filter { fileName ->
+val f = File(context.filesDir, fileName)
+!f.exists() || f.length() == 0L
 }
 }
 private fun extractModelIfMissing(context: Context, fileName: String): File {
@@ -122,6 +136,21 @@ _uiState.update { it.copy(enableLanczosFallback = enabled) }
 }
 fun startPipeline() {
 if (_uiState.value.isRunning) return
+val context = getApplication<Application>().applicationContext
+val missing = getMissingModels(context)
+if (missing.isNotEmpty()) {
+val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
+Log.e("AI_PIPE", msg)
+_uiState.update {
+it.copy(
+isRunning = false,
+step = PipelineStep.ERROR,
+statusMessage = "Ошибка: отсутствуют файлы моделей",
+errorMessage = msg
+)
+}
+return
+}
 val currentState = _uiState.value
 val prompt = currentState.prompt
 val is4K = currentState.targetResolution == "4K"
@@ -151,17 +180,13 @@ _uiState.update { it.copy(remainingSeconds = left) }
 }
 viewModelScope.launch(Dispatchers.IO) {
 try {
-val context = getApplication<Application>().applicationContext
-val unet = extractModelIfMissing(context, "unet.mnn")
-val vae = extractModelIfMissing(context, "vae_decoder.mnn")
-val text = extractModelIfMissing(context, "text_encoder.mnn")
-val unetPath = resolvePath(unet, "unet.mnn")
-val vaePath = resolvePath(vae, "vae_decoder.mnn")
-val textPath = resolvePath(text, "text_encoder.mnn")
+val unetPath = File(context.filesDir, "unet.mnn").absolutePath
+val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
+val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode != 0) {
 timerJob?.cancel()
-val msg = if (initCode == -1) "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}" else "Ошибка инициализации MNN (код $initCode)"
+val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
 Log.e("AI_PIPE", msg)
 _uiState.update {
 it.copy(
