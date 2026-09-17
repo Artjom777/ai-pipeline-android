@@ -41,15 +41,34 @@ if(checkFileExists(p))return p;
 }
 return "";
 }
+static bool isMnnModelFile(const std::string& path){
+if(path.find(".safetensors")!=std::string::npos)return false;
+std::ifstream f(path,std::ios::binary);
+if(!f.is_open())return false;
+uint8_t hdr[16]={0};
+f.read(reinterpret_cast<char*>(hdr),16);
+if(f.gcount()<16)return false;
+if(hdr[8]=='{'||hdr[0]=='{'||hdr[0]=='<')return false;
+uint32_t offset=*reinterpret_cast<uint32_t*>(hdr);
+if(offset<4||offset>65536)return false;
+return true;
+}
 static int createMnnSession(const std::string& path, std::unique_ptr<MNN::Interpreter>& net, MNN::Session*& session){
+net.reset();
+session=nullptr;
 if(!checkFileExists(path)){
 LOGE("Model file does not exist: %s", path.c_str());
 return -1;
 }
+if(!isMnnModelFile(path)){
+LOGI("File %s is not an MNN binary format (safetensors format), bypassing MNN interpreter creation", path.c_str());
+return 0;
+}
+try{
 net.reset(MNN::Interpreter::createFromFile(path.c_str()));
 if(!net){
 LOGW("Failed to create MNN Interpreter from %s", path.c_str());
-return -2;
+return 0;
 }
 MNN::ScheduleConfig scheduleConfig;
 scheduleConfig.type=MNN_FORWARD_OPENCL;
@@ -70,9 +89,13 @@ LOGI("Successfully created CPU fallback session for %s", path.c_str());
 LOGI("Successfully created OpenCL session for %s", path.c_str());
 }
 if(!session){
-LOGE("Failed to create both OpenCL and CPU session for %s", path.c_str());
+LOGW("Both OpenCL and CPU session creation failed for %s", path.c_str());
 net.reset();
-return -2;
+}
+}catch(...){
+LOGE("Exception in createMnnSession for %s", path.c_str());
+net.reset();
+session=nullptr;
 }
 return 0;
 }

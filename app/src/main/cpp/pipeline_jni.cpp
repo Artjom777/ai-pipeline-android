@@ -168,7 +168,9 @@ auto pipelineEnd=std::chrono::steady_clock::now();
 metrics.totalDurationMs=std::chrono::duration<float,std::milli>(pipelineEnd-pipelineStart).count();
 LOGI("Pipeline execution completed in %.2f ms (Budget: %d s, Budget Kept: %s). Fallback: %s", metrics.totalDurationMs, timeoutSec, (metrics.totalDurationMs<=timeoutSec*1000.0f)?"YES":"OVERDUE", usedFallback?"YES":"NO");
 jclass resultClass=env->FindClass("com/aipipe/app/PipelineResult");
+if(!resultClass)return nullptr;
 jmethodID constructor=env->GetMethodID(resultClass,"<init>","(FFFZZ)V");
+if(!constructor)return nullptr;
 jobject resultObj=env->NewObject(resultClass,constructor,metrics.diffusionDurationMs,metrics.upscaleDurationMs,metrics.totalDurationMs,static_cast<jboolean>(metrics.fallbackTriggered),static_cast<jboolean>(metrics.totalDurationMs<=timeoutSec*1000.0f));
 return resultObj;
 }
