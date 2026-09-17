@@ -16,8 +16,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import java.util.Locale
 enum class PipelineStep {
 IDLE,
@@ -51,6 +52,7 @@ val downloadStatus: String = ""
 )
 class PipelineViewModel(application: Application) : AndroidViewModel(application) {
 private val bridge = NativePipelineBridge()
+private val okHttpClient = OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
 private val _uiState = MutableStateFlow(PipelineUiState())
 val uiState: StateFlow<PipelineUiState> = _uiState.asStateFlow()
 private var timerJob: Job? = null
@@ -156,7 +158,7 @@ it.copy(
 isDownloading = true,
 downloadProgress = 0f,
 downloadSpeed = "0.0 МБ/с",
-downloadStatus = "Подготовка к загрузке...",
+downloadStatus = "Подключение к Hugging Face LFS...",
 errorMessage = null
 )
 }
@@ -164,15 +166,15 @@ viewModelScope.launch(Dispatchers.IO) {
 try {
 val context = getApplication<Application>().applicationContext
 val models = listOf(
-Pair("text_encoder.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/text_encoder.mnn"),
-Pair("unet.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/unet.mnn"),
-Pair("vae_decoder.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/vae_decoder.mnn")
+Pair("text_encoder.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/text_encoder.mnn"),
+Pair("vae_decoder.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/vae_decoder.mnn"),
+Pair("unet.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/unet.mnn")
 )
 val totalModels = models.size
 var completedModels = 0
 for ((fileName, urlStr) in models) {
 val targetFile = File(context.filesDir, fileName)
-if (targetFile.exists() && targetFile.length() > 1000L) {
+if (targetFile.exists() && targetFile.length() > 10000L) {
 completedModels++
 _uiState.update {
 it.copy(
@@ -182,15 +184,42 @@ downloadStatus = "$fileName готов ($completedModels/$totalModels)"
 }
 continue
 }
-val tempFile = File(context.filesDir, "$fileName.download")
-if (tempFile.exists()) tempFile.delete()
+val tmpFile = File(context.filesDir, "$fileName.tmp")
+if (tmpFile.exists()) tmpFile.delete()
 _uiState.update {
 it.copy(
 downloadStatus = "Скачивание $fileName (${completedModels + 1}/$totalModels)..."
 )
 }
-downloadFileWithProgress(urlStr, tempFile) { bytesRead, totalBytes, speedMBs ->
-val fileProgress = if (totalBytes > 0) bytesRead.toFloat() / totalBytes.toFloat() else 0f
+val request = Request.Builder()
+.url(urlStr)
+.header("User-Agent", "Mozilla/5.0")
+.build()
+okHttpClient.newCall(request).execute().use { response ->
+if (!response.isSuccessful) {
+throw java.io.IOException("HTTP error ${response.code} for $fileName: ${response.message}")
+}
+val body = response.body ?: throw java.io.IOException("Empty response body for $fileName")
+val contentLength = body.contentLength()
+body.byteStream().use { input ->
+FileOutputStream(tmpFile).use { output ->
+val buffer = ByteArray(65536)
+var bytesRead = 0L
+var lastTime = System.currentTimeMillis()
+var lastBytes = 0L
+var speedMBs = 0f
+var read: Int
+while (input.read(buffer).also { read = it } != -1) {
+output.write(buffer, 0, read)
+bytesRead += read
+val now = System.currentTimeMillis()
+val elapsed = now - lastTime
+if (elapsed >= 500) {
+val diffBytes = bytesRead - lastBytes
+speedMBs = (diffBytes.toFloat() / (elapsed.toFloat() / 1000f)) / (1024f * 1024f)
+lastTime = now
+lastBytes = bytesRead
+val fileProgress = if (contentLength > 0) bytesRead.toFloat() / contentLength.toFloat() else 0f
 val overallProgress = (completedModels.toFloat() + fileProgress) / totalModels.toFloat()
 val speedText = String.format(Locale.US, "%.1f МБ/с", speedMBs)
 _uiState.update {
@@ -201,11 +230,27 @@ downloadStatus = "Скачивание $fileName: ${(fileProgress * 100).toInt()
 )
 }
 }
-if (tempFile.exists() && tempFile.length() > 0L) {
+}
+output.flush()
+}
+}
+}
+if (!tmpFile.exists() || tmpFile.length() == 0L) {
+throw java.io.IOException("Failed to write $fileName: 0 bytes received")
+}
 if (targetFile.exists()) targetFile.delete()
-tempFile.renameTo(targetFile)
+val renamed = tmpFile.renameTo(targetFile)
+if (!renamed) {
+tmpFile.copyTo(targetFile, overwrite = true)
+tmpFile.delete()
 }
 completedModels++
+_uiState.update {
+it.copy(
+downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
+downloadStatus = "$fileName сохранён ($completedModels/$totalModels)"
+)
+}
 }
 val missing = getMissingModels(context)
 if (missing.isEmpty()) {
@@ -227,78 +272,21 @@ _uiState.update {
 it.copy(
 isDownloading = false,
 modelsMissing = true,
-errorMessage = "Не удалось загрузить: ${missing.joinToString(", ")}"
+errorMessage = "Не все файлы сохранены: ${missing.joinToString(", ")}"
 )
 }
 }
-} catch (t: Throwable) {
-Log.e("AI_PIPE", "Model download failed", t)
+} catch (e: Exception) {
+val err = e.localizedMessage ?: e.message ?: "Сбой соединения при загрузке весов"
+Log.e("AI_PIPE", "Model download error: $err", e)
 _uiState.update {
 it.copy(
 isDownloading = false,
-errorMessage = "Ошибка скачивания: ${t.message}"
+errorMessage = "Ошибка скачивания: $err"
 )
 }
 }
 }
-}
-private fun downloadFileWithProgress(
-urlStr: String,
-destination: File,
-onProgress: (bytesRead: Long, totalBytes: Long, speedMBs: Float) -> Unit
-) {
-var currentUrl = urlStr
-var connection: HttpURLConnection? = null
-var redirects = 0
-while (redirects < 5) {
-val url = URL(currentUrl)
-connection = url.openConnection() as HttpURLConnection
-connection.instanceFollowRedirects = true
-connection.connectTimeout = 30000
-connection.readTimeout = 60000
-connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-val code = connection.responseCode
-if (code == HttpURLConnection.HTTP_MOVED_PERM ||
-code == HttpURLConnection.HTTP_MOVED_TEMP ||
-code == 307 || code == 308) {
-val newUrl = connection.getHeaderField("Location")
-connection.disconnect()
-if (newUrl != null) {
-currentUrl = newUrl
-redirects++
-continue
-}
-}
-break
-}
-val conn = connection ?: throw java.io.IOException("Failed to connect to $urlStr")
-val totalBytes = conn.contentLengthLong
-conn.inputStream.use { input ->
-FileOutputStream(destination).use { output ->
-val buffer = ByteArray(65536)
-var bytesReadTotal = 0L
-var lastTime = System.currentTimeMillis()
-var lastBytes = 0L
-var speedMBs = 0f
-var read: Int
-while (input.read(buffer).also { read = it } != -1) {
-output.write(buffer, 0, read)
-bytesReadTotal += read
-val now = System.currentTimeMillis()
-val elapsed = now - lastTime
-if (elapsed >= 500) {
-val bytesInInterval = bytesReadTotal - lastBytes
-speedMBs = (bytesInInterval.toFloat() / (elapsed.toFloat() / 1000f)) / (1024f * 1024f)
-lastTime = now
-lastBytes = bytesReadTotal
-onProgress(bytesReadTotal, totalBytes, speedMBs)
-}
-}
-output.flush()
-onProgress(bytesReadTotal, totalBytes, speedMBs)
-}
-}
-conn.disconnect()
 }
 fun startPipeline() {
 if (_uiState.value.isRunning || _uiState.value.isDownloading) return
