@@ -1,5 +1,6 @@
 package com.aipipe.app
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +44,12 @@ val uiState: StateFlow<PipelineUiState> = _uiState.asStateFlow()
 private var timerJob: Job? = null
 init {
 viewModelScope.launch(Dispatchers.Default) {
+try {
 bridge.nativeInit("/data/local/tmp/models")
+} catch (t: Throwable) {
+Log.e("AI_PIPE", "Failed to initialize native pipeline", t)
+_uiState.update { it.copy(errorMessage = "Ошибка инициализации: ${t.message}") }
+}
 }
 }
 fun onPromptChanged(newPrompt: String) {
@@ -142,13 +148,14 @@ errorMessage = "Ошибка инференса MNN/NCNN"
 )
 }
 }
-} catch (e: Exception) {
+} catch (t: Throwable) {
 timerJob?.cancel()
+Log.e("AI_PIPE", "Pipeline execution error", t)
 _uiState.update {
 it.copy(
 isRunning = false,
 step = PipelineStep.ERROR,
-errorMessage = e.localizedMessage ?: "Сбой выполнения"
+errorMessage = t.localizedMessage ?: "Сбой выполнения"
 )
 }
 }
@@ -157,6 +164,10 @@ errorMessage = e.localizedMessage ?: "Сбой выполнения"
 override fun onCleared() {
 super.onCleared()
 timerJob?.cancel()
+try {
 bridge.nativeRelease()
+} catch (t: Throwable) {
+Log.e("AI_PIPE", "Error during nativeRelease", t)
+}
 }
 }
