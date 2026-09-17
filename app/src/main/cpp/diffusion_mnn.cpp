@@ -15,7 +15,7 @@ std::ifstream f(path,std::ios::binary|std::ios::ate);
 if(!f.is_open()||!f.good())return false;
 return f.tellg()>0;
 }
-static std::string resolveModelPath(const std::string& providedPath, const std::string& fallbackDir, const std::string& fileName){
+static std::string resolveModelPath(const std::string& providedPath, const std::string& fallbackDir, const std::string& fileName, const std::string& altPath=""){
 if(checkFileExists(providedPath))return providedPath;
 std::vector<std::string> candidates={
 fallbackDir+"/"+fileName,
@@ -23,6 +23,12 @@ fallbackDir+"/"+fileName,
 "/sdcard/models/"+fileName,
 "/sdcard/ai_models/"+fileName
 };
+if(!altPath.empty()){
+candidates.push_back(fallbackDir+"/"+altPath);
+candidates.push_back("/data/local/tmp/models/"+altPath);
+candidates.push_back("/sdcard/models/"+altPath);
+candidates.push_back("/sdcard/ai_models/"+altPath);
+}
 for(const auto& p:candidates){
 if(checkFileExists(p))return p;
 }
@@ -68,9 +74,9 @@ DiffusionMNNPipeline::~DiffusionMNNPipeline(){releaseSessionAndOpenCL();}
 int DiffusionMNNPipeline::initialize(const std::string& modelDir, const std::string& unetPath, const std::string& vaePath, const std::string& textEncoderPath){
 modelsPath=modelDir;
 LOGI("Initializing MNN diffusion pipeline with OpenCL backend (MNN_OPENCL=ON, MNN_LOW_MEMORY=ON)");
-unetModelPath=resolveModelPath(unetPath,modelDir,"unet.mnn");
-vaeModelPath=resolveModelPath(vaePath,modelDir,"vae_decoder.mnn");
-textModelPath=resolveModelPath(textEncoderPath,modelDir,"text_encoder.mnn");
+unetModelPath=resolveModelPath(unetPath,modelDir,"unet.mnn","unet/diffusion_pytorch_model.fp16.safetensors");
+vaeModelPath=resolveModelPath(vaePath,modelDir,"vae_decoder.mnn","vae/diffusion_pytorch_model.fp16.safetensors");
+textModelPath=resolveModelPath(textEncoderPath,modelDir,"text_encoder.mnn","text_encoder/model.fp16.safetensors");
 if(unetModelPath.empty()||vaeModelPath.empty()||textModelPath.empty()){
 LOGE("MNN models not found: unet='%s', vae='%s', text='%s'", unetModelPath.c_str(), vaeModelPath.c_str(), textModelPath.c_str());
 initialized=false;

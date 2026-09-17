@@ -94,7 +94,26 @@ _uiState.update { it.copy(errorMessage = "Ошибка инициализаци�
 }
 }
 }
+private fun ensureModelAliases(context: Context) {
+val pairs = listOf(
+Pair("text_encoder/model.fp16.safetensors", "text_encoder.mnn"),
+Pair("unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn"),
+Pair("vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn")
+)
+for ((orig, alias) in pairs) {
+val origFile = File(context.filesDir, orig)
+val aliasFile = File(context.filesDir, alias)
+if (origFile.exists() && origFile.length() > 0L && (!aliasFile.exists() || aliasFile.length() == 0L)) {
+aliasFile.parentFile?.mkdirs()
+origFile.copyTo(aliasFile, overwrite = true)
+} else if (aliasFile.exists() && aliasFile.length() > 0L && (!origFile.exists() || origFile.length() == 0L)) {
+origFile.parentFile?.mkdirs()
+aliasFile.copyTo(origFile, overwrite = true)
+}
+}
+}
 private fun getMissingModels(context: Context): List<String> {
+ensureModelAliases(context)
 val required = listOf("unet.mnn", "text_encoder.mnn", "vae_decoder.mnn")
 return required.filter { fileName ->
 val f = File(context.filesDir, fileName)
@@ -166,29 +185,31 @@ viewModelScope.launch(Dispatchers.IO) {
 try {
 val context = getApplication<Application>().applicationContext
 val models = listOf(
-Pair("text_encoder.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/text_encoder.mnn"),
-Pair("vae_decoder.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/vae_decoder.mnn"),
-Pair("unet.mnn", "https://huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/unet.mnn")
+Triple("text_encoder/model.fp16.safetensors", "text_encoder.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/text_encoder/model.fp16.safetensors?download=true"),
+Triple("unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/unet/diffusion_pytorch_model.fp16.safetensors?download=true"),
+Triple("vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/vae/diffusion_pytorch_model.fp16.safetensors?download=true")
 )
 val totalModels = models.size
 var completedModels = 0
-for ((fileName, urlStr) in models) {
-val targetFile = File(context.filesDir, fileName)
-if (targetFile.exists() && targetFile.length() > 10000L) {
+for ((origRelPath, aliasName, urlStr) in models) {
+val targetFile = File(context.filesDir, origRelPath)
+val aliasFile = File(context.filesDir, aliasName)
+if ((targetFile.exists() && targetFile.length() > 10000L) || (aliasFile.exists() && aliasFile.length() > 10000L)) {
+ensureModelAliases(context)
 completedModels++
 _uiState.update {
 it.copy(
 downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
-downloadStatus = "$fileName готов ($completedModels/$totalModels)"
+downloadStatus = "$aliasName готов ($completedModels/$totalModels)"
 )
 }
 continue
 }
-val tmpFile = File(context.filesDir, "$fileName.tmp")
+val tmpFile = File(context.filesDir, "$aliasName.tmp")
 if (tmpFile.exists()) tmpFile.delete()
 _uiState.update {
 it.copy(
-downloadStatus = "Скачивание $fileName (${completedModels + 1}/$totalModels)..."
+downloadStatus = "Скачивание $aliasName (${completedModels + 1}/$totalModels)..."
 )
 }
 val request = Request.Builder()
@@ -197,9 +218,9 @@ val request = Request.Builder()
 .build()
 okHttpClient.newCall(request).execute().use { response ->
 if (!response.isSuccessful) {
-throw java.io.IOException("HTTP error ${response.code} for $fileName: ${response.message}")
+throw java.io.IOException("HTTP error ${response.code} for $aliasName: ${response.message}")
 }
-val body = response.body ?: throw java.io.IOException("Empty response body for $fileName")
+val body = response.body ?: throw java.io.IOException("Empty response body for $aliasName")
 val contentLength = body.contentLength()
 body.byteStream().use { input ->
 FileOutputStream(tmpFile).use { output ->
@@ -226,7 +247,7 @@ _uiState.update {
 it.copy(
 downloadProgress = overallProgress.coerceIn(0f, 1f),
 downloadSpeed = speedText,
-downloadStatus = "Скачивание $fileName: ${(fileProgress * 100).toInt()}%"
+downloadStatus = "Скачивание $aliasName: ${(fileProgress * 100).toInt()}%"
 )
 }
 }
@@ -236,19 +257,22 @@ output.flush()
 }
 }
 if (!tmpFile.exists() || tmpFile.length() == 0L) {
-throw java.io.IOException("Failed to write $fileName: 0 bytes received")
+throw java.io.IOException("Failed to write $aliasName: 0 bytes received")
 }
+targetFile.parentFile?.mkdirs()
 if (targetFile.exists()) targetFile.delete()
 val renamed = tmpFile.renameTo(targetFile)
 if (!renamed) {
 tmpFile.copyTo(targetFile, overwrite = true)
 tmpFile.delete()
 }
+if (aliasFile.exists()) aliasFile.delete()
+targetFile.copyTo(aliasFile, overwrite = true)
 completedModels++
 _uiState.update {
 it.copy(
 downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
-downloadStatus = "$fileName сохранён ($completedModels/$totalModels)"
+downloadStatus = "$aliasName сохранён ($completedModels/$totalModels)"
 )
 }
 }
