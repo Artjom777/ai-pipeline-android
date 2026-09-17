@@ -16,6 +16,6 @@ bool initialized;
 std::string modelPath;
 int tileSize;
 int tileOverlap;
-void processTile2x(const uint8_t* inImg, int inW, int inH, int tileX, int tileY, int tileW, int tileH, uint8_t* outImg, int outW, int outH, int scale);
+void processTile2x(const uint8_t* inImg, int inW, int inH, int inChannels, int tileX, int tileY, int tileW, int tileH, uint8_t* outImg, int outW, int outH, int scale);
 };
 #endif

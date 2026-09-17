@@ -18,7 +18,7 @@ if(!initialized)return;
 LOGI("Releasing NCNN Vulkan GPU context and memory allocations");
 initialized=false;
 }
-void UpscaleNCNNPipeline::processTile2x(const uint8_t* inImg, int inW, int inH, int tileX, int tileY, int curTileW, int curTileH, uint8_t* outImg, int outW, int outH, int scale){
+void UpscaleNCNNPipeline::processTile2x(const uint8_t* inImg, int inW, int inH, int inChannels, int tileX, int tileY, int curTileW, int curTileH, uint8_t* outImg, int outW, int outH, int scale){
 int pad=tileOverlap;
 int padLeft=(tileX==0)?0:pad;
 int padTop=(tileY==0)?0:pad;
@@ -31,13 +31,16 @@ int inCropH=curTileH+padTop+padBottom;
 std::vector<uint8_t> tileInBuf(inCropW*inCropH*4);
 for(int y=0;y<inCropH;++y){
 int sy=std::clamp(inCropY+y,0,inH-1);
-const uint8_t* srcRow=inImg+sy*inW*4;
+const uint8_t* srcRow=inImg+sy*inW*inChannels;
 uint8_t* dstRow=tileInBuf.data()+y*inCropW*4;
 for(int x=0;x<inCropW;++x){
 int sx=std::clamp(inCropX+x,0,inW-1);
-const uint8_t* sp=srcRow+sx*4;
+const uint8_t* sp=srcRow+sx*inChannels;
 uint8_t* dp=dstRow+x*4;
-dp[0]=sp[0];dp[1]=sp[1];dp[2]=sp[2];dp[3]=sp[3];
+dp[0]=sp[0];
+dp[1]=sp[1];
+dp[2]=sp[2];
+dp[3]=0xFF;
 }
 }
 int upW=inCropW*scale;
@@ -58,7 +61,7 @@ int dx=tileX*scale+x;
 if(dx>=outW)break;
 const uint8_t* sp=srcRow+(cropOutX+x)*4;
 uint8_t* dp=dstRow+dx*4;
-dp[0]=sp[0];dp[1]=sp[1];dp[2]=sp[2];dp[3]=sp[3];
+dp[0]=sp[0];dp[1]=sp[1];dp[2]=sp[2];dp[3]=0xFF;
 }
 }
 }
@@ -82,6 +85,7 @@ LOGI("Time budget sufficient (%.2fs >= %.2fs). Standard pipeline active.", remai
 int stage1W=inW*2;
 int stage1H=inH*2;
 std::vector<uint8_t> intermediate1024(stage1W*stage1H*4,0);
+int inChannels=(inRgba.size()>=static_cast<size_t>(inW*inH*4))?4:3;
 int currentTile=0;
 for(int ty=0;ty<inH;ty+=stride){
 int curTileH=std::min(stride,inH-ty);
@@ -96,7 +100,7 @@ snprintf(msg,sizeof(msg),"Stage 2: Real-ESRGAN Tile [%d/%d] (Vulkan compute)", c
 callback->onStageProgress(2,progress,msg);
 }
 std::this_thread::sleep_for(std::chrono::milliseconds(50));
-processTile2x(inRgba.data(),inW,inH,tx,ty,curTileW,curTileH,intermediate1024.data(),stage1W,stage1H,2);
+processTile2x(inRgba.data(),inW,inH,inChannels,tx,ty,curTileW,curTileH,intermediate1024.data(),stage1W,stage1H,2);
 auto curTime=std::chrono::steady_clock::now();
 float elapsedTotalSec=std::chrono::duration<float>(curTime-startUpscaleTime).count();
 if(!usedFallback&&(remainingTimeSec-elapsedTotalSec)<5.0f){

@@ -103,9 +103,9 @@ JNIProgressBridge progressBridge(env,callback);
 if(!sDiffusionPipeline)sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
 if(!sUpscalePipeline)sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
 ExecutionMetrics metrics;
-std::vector<uint8_t> rgba512;
+std::vector<uint8_t> rgb512;
 auto diffStart=std::chrono::steady_clock::now();
-bool diffOk=sDiffusionPipeline->generateImage(prompt,rgba512,&progressBridge);
+bool diffOk=sDiffusionPipeline->generateImage(prompt,rgb512,&progressBridge);
 auto diffEnd=std::chrono::steady_clock::now();
 metrics.diffusionDurationMs=std::chrono::duration<float,std::milli>(diffEnd-diffStart).count();
 env->ReleaseStringUTFChars(prompt_,prompt);
@@ -114,8 +114,8 @@ LOGE("Stage 1 diffusion failed on Mali OpenCL backend");
 return nullptr;
 }
 if(outBitmap512){
-int ch=(rgba512.size()>=static_cast<size_t>(512*512*4))?4:3;
-if(writeBufferToAndroidBitmap(env,outBitmap512,rgba512.data(),512,512,ch)){
+int ch=(rgb512.size()>=static_cast<size_t>(512*512*4))?4:3;
+if(writeBufferToAndroidBitmap(env,outBitmap512,rgb512.data(),512,512,ch)){
 LOGI("Locked and updated Stage 1 AndroidBitmap 512x512 with stride and ARGB_8888 0xFF alpha");
 }
 }
@@ -126,7 +126,7 @@ LOGI("Stage 1 completed in %.2f ms. Elapsed pipeline time: %.2f s. Remaining bud
 std::vector<uint8_t> rgba4K;
 bool usedFallback=false;
 auto upStart=std::chrono::steady_clock::now();
-bool upOk=sUpscalePipeline->upscaleImage(rgba512,512,512,rgba4K,targetW,targetH,remainingBudgetSec,usedFallback,&progressBridge);
+bool upOk=sUpscalePipeline->upscaleImage(rgb512,512,512,rgba4K,targetW,targetH,remainingBudgetSec,usedFallback,&progressBridge);
 auto upEnd=std::chrono::steady_clock::now();
 metrics.upscaleDurationMs=std::chrono::duration<float,std::milli>(upEnd-upStart).count();
 metrics.fallbackTriggered=usedFallback;
