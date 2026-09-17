@@ -40,10 +40,8 @@ val targetResolution: String = "4K",
 val enableLanczosFallback: Boolean = true,
 val remainingSeconds: Int = 30
 )
-class PipelineViewModel(
-application: Application,
-private val bridge: NativePipelineBridge = NativePipelineBridge()
-) : AndroidViewModel(application) {
+class PipelineViewModel(application: Application) : AndroidViewModel(application) {
+private val bridge = NativePipelineBridge()
 private val _uiState = MutableStateFlow(PipelineUiState())
 val uiState: StateFlow<PipelineUiState> = _uiState.asStateFlow()
 private var timerJob: Job? = null

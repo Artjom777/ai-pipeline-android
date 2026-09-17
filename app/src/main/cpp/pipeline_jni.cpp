@@ -84,18 +84,18 @@ static std::unique_ptr<DiffusionMNNPipeline> sDiffusionPipeline;
 static std::unique_ptr<UpscaleNCNNPipeline> sUpscalePipeline;
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aipipe_app_NativePipelineBridge_nativeInit(JNIEnv* env,jobject thiz,jstring modelDir_,jstring unetPath_,jstring vaePath_,jstring textEncoderPath_){
-const char* modelDirC=env->GetStringUTFChars(modelDir_,nullptr);
-const char* unetPathC=env->GetStringUTFChars(unetPath_,nullptr);
-const char* vaePathC=env->GetStringUTFChars(vaePath_,nullptr);
-const char* textEncoderPathC=env->GetStringUTFChars(textEncoderPath_,nullptr);
+const char* modelDirC=modelDir_?env->GetStringUTFChars(modelDir_,nullptr):nullptr;
+const char* unetPathC=unetPath_?env->GetStringUTFChars(unetPath_,nullptr):nullptr;
+const char* vaePathC=vaePath_?env->GetStringUTFChars(vaePath_,nullptr):nullptr;
+const char* textEncoderPathC=textEncoderPath_?env->GetStringUTFChars(textEncoderPath_,nullptr):nullptr;
 std::string modelDir=modelDirC?modelDirC:"";
 std::string unetPath=unetPathC?unetPathC:"";
 std::string vaePath=vaePathC?vaePathC:"";
 std::string textEncoderPath=textEncoderPathC?textEncoderPathC:"";
-env->ReleaseStringUTFChars(modelDir_,modelDirC);
-env->ReleaseStringUTFChars(unetPath_,unetPathC);
-env->ReleaseStringUTFChars(vaePath_,vaePathC);
-env->ReleaseStringUTFChars(textEncoderPath_,textEncoderPathC);
+if(modelDir_&&modelDirC)env->ReleaseStringUTFChars(modelDir_,modelDirC);
+if(unetPath_&&unetPathC)env->ReleaseStringUTFChars(unetPath_,unetPathC);
+if(vaePath_&&vaePathC)env->ReleaseStringUTFChars(vaePath_,vaePathC);
+if(textEncoderPath_&&textEncoderPathC)env->ReleaseStringUTFChars(textEncoderPath_,textEncoderPathC);
 LOGI("Native init: modelDir='%s', unet='%s', vae='%s', text='%s'", modelDir.c_str(), unetPath.c_str(), vaePath.c_str(), textEncoderPath.c_str());
 sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
 sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
@@ -104,11 +104,17 @@ bool ncnnOk=sUpscalePipeline->initialize(modelDir);
 LOGI("Native engines initialized. MNN: %s, NCNN: %s", mnnOk?"OK":"FAIL", ncnnOk?"OK":"FAIL");
 return static_cast<jboolean>(mnnOk&&ncnnOk);
 }
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_aipipe_app_NativePipelineBridge_nativeInitInternal(JNIEnv* env,jobject thiz,jstring modelDir_,jstring unetPath_,jstring vaePath_,jstring textEncoderPath_){
+return Java_com_aipipe_app_NativePipelineBridge_nativeInit(env,thiz,modelDir_,unetPath_,vaePath_,textEncoderPath_);
+}
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_aipipe_app_NativePipelineBridge_nativeExecutePipeline(JNIEnv* env,jobject thiz,jstring prompt_,jint timeoutSec,jint targetW,jint targetH,jobject callback,jobject outBitmap512,jobject outBitmap4K){
 auto pipelineStart=std::chrono::steady_clock::now();
-const char* prompt=env->GetStringUTFChars(prompt_,nullptr);
-LOGI("Starting execution pipeline. Timeout: %ds, Target: %dx%d, Prompt: '%s'", timeoutSec, targetW, targetH, prompt);
+const char* promptC=prompt_?env->GetStringUTFChars(prompt_,nullptr):nullptr;
+std::string prompt=promptC?promptC:"";
+LOGI("Starting execution pipeline. Timeout: %ds, Target: %dx%d, Prompt: '%s'", timeoutSec, targetW, targetH, prompt.c_str());
+if(prompt_&&promptC)env->ReleaseStringUTFChars(prompt_,promptC);
 JNIProgressBridge progressBridge(env,callback);
 if(!sDiffusionPipeline)sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
 if(!sUpscalePipeline)sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
@@ -118,7 +124,6 @@ auto diffStart=std::chrono::steady_clock::now();
 bool diffOk=sDiffusionPipeline->generateImage(prompt,rgb512,&progressBridge);
 auto diffEnd=std::chrono::steady_clock::now();
 metrics.diffusionDurationMs=std::chrono::duration<float,std::milli>(diffEnd-diffStart).count();
-env->ReleaseStringUTFChars(prompt_,prompt);
 if(!diffOk){
 LOGE("Stage 1 diffusion failed on Mali OpenCL backend");
 return nullptr;
@@ -158,6 +163,10 @@ jmethodID constructor=env->GetMethodID(resultClass,"<init>","(FFFZZ)V");
 jobject resultObj=env->NewObject(resultClass,constructor,metrics.diffusionDurationMs,metrics.upscaleDurationMs,metrics.totalDurationMs,static_cast<jboolean>(metrics.fallbackTriggered),static_cast<jboolean>(metrics.totalDurationMs<=timeoutSec*1000.0f));
 return resultObj;
 }
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_aipipe_app_NativePipelineBridge_nativeExecutePipelineInternal(JNIEnv* env,jobject thiz,jstring prompt_,jint timeoutSec,jint targetW,jint targetH,jobject callback,jobject outBitmap512,jobject outBitmap4K){
+return Java_com_aipipe_app_NativePipelineBridge_nativeExecutePipeline(env,thiz,prompt_,timeoutSec,targetW,targetH,callback,outBitmap512,outBitmap4K);
+}
 extern "C" JNIEXPORT void JNICALL
 Java_com_aipipe_app_NativePipelineBridge_nativeRelease(JNIEnv* env,jobject thiz){
 LOGI("Releasing native pipeline resources (MNN OpenCL + NCNN Vulkan)");
@@ -169,4 +178,8 @@ if(sUpscalePipeline){
 sUpscalePipeline->releaseVulkanInstance();
 sUpscalePipeline.reset();
 }
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_aipipe_app_NativePipelineBridge_nativeReleaseInternal(JNIEnv* env,jobject thiz){
+Java_com_aipipe_app_NativePipelineBridge_nativeRelease(env,thiz);
 }
