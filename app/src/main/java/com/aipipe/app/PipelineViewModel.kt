@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,6 +57,14 @@ private val okHttpClient = OkHttpClient.Builder().followRedirects(true).followSs
 private val _uiState = MutableStateFlow(PipelineUiState())
 val uiState: StateFlow<PipelineUiState> = _uiState.asStateFlow()
 private var timerJob: Job? = null
+private val requiredModelFiles = listOf(
+"text_encoder.mnn",
+"text_encoder.mnn.weight",
+"unet.mnn",
+"unet.mnn.weight",
+"vae_decoder.mnn",
+"vae_decoder.mnn.weight"
+)
 init {
 viewModelScope.launch(Dispatchers.IO) {
 try {
@@ -63,12 +72,13 @@ val context = getApplication<Application>().applicationContext
 extractModelIfMissing(context, "unet.mnn")
 extractModelIfMissing(context, "text_encoder.mnn")
 extractModelIfMissing(context, "vae_decoder.mnn")
+cleanupObsoleteFiles(context)
 val missing = getMissingModels(context)
 if (missing.isNotEmpty()) {
 Log.w("AI_PIPE", "Missing models on startup: ${missing.joinToString(", ")}")
 _uiState.update {
 it.copy(
-statusMessage = "Требуется загрузка моделей",
+statusMessage = "Требуется загрузка моделей MNN",
 modelsMissing = true,
 missingModelsList = missing,
 errorMessage = null
@@ -76,13 +86,13 @@ errorMessage = null
 }
 return@launch
 }
-val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
-val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
-val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode == 0) {
 Log.i("AI_PIPE", "Native pipeline initialized successfully on startup")
-_uiState.update { it.copy(statusMessage = "Модели MNN загружены", errorMessage = null) }
+_uiState.update { it.copy(statusMessage = "Модели MNN загружены", errorMessage = null, modelsMissing = false) }
 } else {
 val err = "Ошибка инициализации MNN (код $initCode)"
 Log.w("AI_PIPE", err)
@@ -94,60 +104,67 @@ _uiState.update { it.copy(errorMessage = "Ошибка инициализаци�
 }
 }
 }
-private fun resolveModelFile(context: Context, preferredName: String, altRelPath: String): File {
-val f1 = File(context.filesDir, preferredName)
-if (f1.exists() && f1.length() > 0L) return f1
-val f2 = File(context.filesDir, altRelPath)
-if (f2.exists() && f2.length() > 0L) return f2
-val f3 = File("/data/local/tmp/models", preferredName)
-if (f3.exists() && f3.length() > 0L) return f3
-val f4 = File("/sdcard/models", preferredName)
-if (f4.exists() && f4.length() > 0L) return f4
+private fun isValidModelFile(file: File, name: String): Boolean {
+if (!file.exists() || file.length() <= 0L) return false
+val len = file.length()
+if (name == "text_encoder.mnn" && (len < 50000L || len > 10000000L)) return false
+if (name == "text_encoder.mnn.weight" && len < 50000000L) return false
+if (name == "unet.mnn" && (len < 500000L || len > 50000000L)) return false
+if (name == "unet.mnn.weight" && len < 200000000L) return false
+if (name == "vae_decoder.mnn" && (len < 30000L || len > 10000000L)) return false
+if (name == "vae_decoder.mnn.weight" && len < 10000000L) return false
+if (name.endsWith(".mnn")) {
+try {
+FileInputStream(file).use { fis ->
+val hdr = ByteArray(16)
+val r = fis.read(hdr)
+if (r < 16) return false
+if (hdr[0] == '{'.code.toByte() || hdr[0] == '<'.code.toByte() || hdr[8] == '{'.code.toByte()) return false
+val b0 = hdr[0].toInt() and 0xFF
+val b1 = hdr[1].toInt() and 0xFF
+val b2 = hdr[2].toInt() and 0xFF
+val b3 = hdr[3].toInt() and 0xFF
+val offset = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+if (offset < 4 || offset > 65536) return false
+}
+} catch (_: Throwable) {
+return false
+}
+}
+return true
+}
+private fun cleanupObsoleteFiles(context: Context) {
+val oldSafetensors = listOf(
+"text_encoder/model.fp16.safetensors",
+"unet/diffusion_pytorch_model.fp16.safetensors",
+"vae/diffusion_pytorch_model.fp16.safetensors"
+)
+for (rel in oldSafetensors) {
+val f = File(context.filesDir, rel)
+if (f.exists()) try { f.delete() } catch (_: Throwable) {}
+}
+for (name in listOf("text_encoder.mnn", "unet.mnn", "vae_decoder.mnn")) {
+val f = File(context.filesDir, name)
+if (f.exists() && !isValidModelFile(f, name)) {
+try { f.delete() } catch (_: Throwable) {}
+}
+}
+}
+private fun resolveModelFile(context: Context, fileName: String): File {
+val f1 = File(context.filesDir, fileName)
+if (isValidModelFile(f1, fileName)) return f1
+val f2 = File("/data/local/tmp/models", fileName)
+if (isValidModelFile(f2, fileName)) return f2
+val f3 = File("/sdcard/models", fileName)
+if (isValidModelFile(f3, fileName)) return f3
 return f1
 }
-private fun ensureModelAliases(context: Context) {
-val pairs = listOf(
-Pair("text_encoder/model.fp16.safetensors", "text_encoder.mnn"),
-Pair("unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn"),
-Pair("vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn")
-)
-for ((orig, alias) in pairs) {
-val origFile = File(context.filesDir, orig)
-val aliasFile = File(context.filesDir, alias)
-if (origFile.exists() && origFile.length() > 0L && (!aliasFile.exists() || aliasFile.length() == 0L)) {
-aliasFile.parentFile?.mkdirs()
-try {
-if (aliasFile.exists()) aliasFile.delete()
-android.system.Os.symlink(origFile.absolutePath, aliasFile.absolutePath)
-} catch (_: Throwable) {
-try {
-origFile.copyTo(aliasFile, overwrite = true)
-} catch (_: Throwable) {}
-}
-} else if (aliasFile.exists() && aliasFile.length() > 0L && (!origFile.exists() || origFile.length() == 0L)) {
-origFile.parentFile?.mkdirs()
-try {
-if (origFile.exists()) origFile.delete()
-android.system.Os.symlink(aliasFile.absolutePath, origFile.absolutePath)
-} catch (_: Throwable) {
-try {
-aliasFile.copyTo(origFile, overwrite = true)
-} catch (_: Throwable) {}
-}
-}
-}
-}
 private fun getMissingModels(context: Context): List<String> {
-ensureModelAliases(context)
-val models = listOf(
-Triple("unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn"),
-Triple("text_encoder.mnn", "text_encoder/model.fp16.safetensors", "text_encoder.mnn"),
-Triple("vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn")
-)
-return models.filter { (pref, alt, _) ->
-val file = resolveModelFile(context, pref, alt)
-!file.exists() || file.length() == 0L
-}.map { it.third }
+cleanupObsoleteFiles(context)
+return requiredModelFiles.filter { name ->
+val file = resolveModelFile(context, name)
+!isValidModelFile(file, name)
+}
 }
 private fun extractModelIfMissing(context: Context, fileName: String): File {
 val targetFile = File(context.filesDir, fileName)
@@ -173,20 +190,6 @@ targetFile.delete()
 }
 return targetFile
 }
-private fun resolvePath(internalFile: File, fileName: String): String {
-if (internalFile.exists() && internalFile.length() > 0L) {
-return internalFile.absolutePath
-}
-val tmpFile = File("/data/local/tmp/models", fileName)
-if (tmpFile.exists() && tmpFile.length() > 0L) {
-return tmpFile.absolutePath
-}
-val sdFile = File("/sdcard/models", fileName)
-if (sdFile.exists() && sdFile.length() > 0L) {
-return sdFile.absolutePath
-}
-return internalFile.absolutePath
-}
 fun onPromptChanged(newPrompt: String) {
 _uiState.update { it.copy(prompt = newPrompt) }
 }
@@ -206,50 +209,43 @@ it.copy(
 isDownloading = true,
 downloadProgress = 0f,
 downloadSpeed = "0.0 МБ/с",
-downloadStatus = "Подключение к Hugging Face LFS...",
+downloadStatus = "Подключение к Hugging Face MNN...",
 errorMessage = null
 )
 }
 viewModelScope.launch(Dispatchers.IO) {
 try {
 val context = getApplication<Application>().applicationContext
-val models = listOf(
-Triple("text_encoder/model.fp16.safetensors", "text_encoder.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/text_encoder/model.fp16.safetensors?download=true"),
-Triple("unet/diffusion_pytorch_model.fp16.safetensors", "unet.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/unet/diffusion_pytorch_model.fp16.safetensors?download=true"),
-Triple("vae/diffusion_pytorch_model.fp16.safetensors", "vae_decoder.mnn", "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/vae/diffusion_pytorch_model.fp16.safetensors?download=true")
-)
-val totalModels = models.size
+cleanupObsoleteFiles(context)
+val baseUrl = "https:" + "/" + "/" + "huggingface.co/taobao-mnn/stable-diffusion-v1-5-mnn-opencl/resolve/main/"
+val totalModels = requiredModelFiles.size
 var completedModels = 0
-for ((origRelPath, aliasName, urlStr) in models) {
-val targetFile = File(context.filesDir, origRelPath)
-val aliasFile = File(context.filesDir, aliasName)
-if ((targetFile.exists() && targetFile.length() > 10000L) || (aliasFile.exists() && aliasFile.length() > 10000L)) {
-ensureModelAliases(context)
+for (modelName in requiredModelFiles) {
+val targetFile = File(context.filesDir, modelName)
+if (isValidModelFile(targetFile, modelName)) {
 completedModels++
 _uiState.update {
 it.copy(
 downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
-downloadStatus = "$aliasName готов ($completedModels/$totalModels)"
+downloadStatus = "$modelName готов ($completedModels/$totalModels)"
 )
 }
 continue
 }
-val tmpFile = File(context.filesDir, "$aliasName.tmp")
+val tmpFile = File(context.filesDir, "$modelName.tmp")
 if (tmpFile.exists()) tmpFile.delete()
 _uiState.update {
 it.copy(
-downloadStatus = "Скачивание $aliasName (${completedModels + 1}/$totalModels)..."
+downloadStatus = "Скачивание $modelName (${completedModels + 1}/$totalModels)..."
 )
 }
-val request = Request.Builder()
-.url(urlStr)
-.header("User-Agent", "Mozilla/5.0")
-.build()
+val urlStr = baseUrl + modelName
+val request = Request.Builder().url(urlStr).header("User-Agent", "Mozilla/5.0").build()
 okHttpClient.newCall(request).execute().use { response ->
 if (!response.isSuccessful) {
-throw java.io.IOException("HTTP error ${response.code} for $aliasName: ${response.message}")
+throw java.io.IOException("HTTP error ${response.code} for $modelName: ${response.message}")
 }
-val body = response.body ?: throw java.io.IOException("Empty response body for $aliasName")
+val body = response.body ?: throw java.io.IOException("Empty response body for $modelName")
 val contentLength = body.contentLength()
 body.byteStream().use { input ->
 FileOutputStream(tmpFile).use { output ->
@@ -276,7 +272,7 @@ _uiState.update {
 it.copy(
 downloadProgress = overallProgress.coerceIn(0f, 1f),
 downloadSpeed = speedText,
-downloadStatus = "Скачивание $aliasName: ${(fileProgress * 100).toInt()}%"
+downloadStatus = "Скачивание $modelName: ${(fileProgress * 100).toInt()}%\ ${bytesRead / (1024 * 1024)}МБ"
 )
 }
 }
@@ -286,7 +282,7 @@ output.flush()
 }
 }
 if (!tmpFile.exists() || tmpFile.length() == 0L) {
-throw java.io.IOException("Failed to write $aliasName: 0 bytes received")
+throw java.io.IOException("Failed to write $modelName: 0 bytes received")
 }
 targetFile.parentFile?.mkdirs()
 if (targetFile.exists()) targetFile.delete()
@@ -295,32 +291,25 @@ if (!renamed) {
 tmpFile.copyTo(targetFile, overwrite = true)
 tmpFile.delete()
 }
-try {
-if (aliasFile.exists()) aliasFile.delete()
-android.system.Os.symlink(targetFile.absolutePath, aliasFile.absolutePath)
-} catch (_: Throwable) {
-try {
-targetFile.copyTo(aliasFile, overwrite = true)
-} catch (_: Throwable) {}
-}
 completedModels++
 _uiState.update {
 it.copy(
 downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
-downloadStatus = "$aliasName сохранён ($completedModels/$totalModels)"
+downloadStatus = "$modelName сохранён ($completedModels/$totalModels)"
 )
 }
 }
 val missing = getMissingModels(context)
 if (missing.isEmpty()) {
-val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
-val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
-val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 _uiState.update {
 it.copy(
 isDownloading = false,
 modelsMissing = false,
+missingModelsList = emptyList(),
 downloadProgress = 1f,
 statusMessage = if (initCode == 0) "Модели MNN загружены" else "Готов к запуску",
 errorMessage = null
@@ -331,6 +320,7 @@ _uiState.update {
 it.copy(
 isDownloading = false,
 modelsMissing = true,
+missingModelsList = missing,
 errorMessage = "Не все файлы сохранены: ${missing.joinToString(", ")}"
 )
 }
@@ -357,7 +347,7 @@ it.copy(
 isRunning = false,
 modelsMissing = true,
 missingModelsList = missing,
-statusMessage = "Требуется загрузка моделей"
+statusMessage = "Требуется загрузка моделей MNN"
 )
 }
 return
@@ -391,15 +381,15 @@ _uiState.update { it.copy(remainingSeconds = left) }
 }
 viewModelScope.launch(Dispatchers.IO) {
 try {
-val unetPath = resolveModelFile(context, "unet.mnn", "unet/diffusion_pytorch_model.fp16.safetensors").absolutePath
-val textPath = resolveModelFile(context, "text_encoder.mnn", "text_encoder/model.fp16.safetensors").absolutePath
-val vaePath = resolveModelFile(context, "vae_decoder.mnn", "vae/diffusion_pytorch_model.fp16.safetensors").absolutePath
+val unetPath = resolveModelFile(context, "unet.mnn").absolutePath
+val textPath = resolveModelFile(context, "text_encoder.mnn").absolutePath
+val vaePath = resolveModelFile(context, "vae_decoder.mnn").absolutePath
 val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
 if (initCode != 0) {
 timerJob?.cancel()
 val curMissing = getMissingModels(context)
 val msg = if (curMissing.isNotEmpty()) {
-"Отсутствуют файлы моделей: ${curMissing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
+"Отсутствуют файлы моделей MNN: ${curMissing.joinToString(", ")}"
 } else {
 "Ошибка инициализации MNN (код $initCode)"
 }
@@ -453,7 +443,7 @@ it.copy(
 isRunning = false,
 step = PipelineStep.COMPLETED,
 progress = 1.0f,
-statusMessage = "Завершено за ${String.format("%.1f", result.totalDurationMs / 1000f)} с",
+statusMessage = "Завершено за ${String.format(Locale.US, "%.1f", result.totalDurationMs / 1000f)} с",
 bitmap512 = bmp512,
 bitmap4K = bmpFinal,
 metrics = result
