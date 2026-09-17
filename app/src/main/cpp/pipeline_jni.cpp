@@ -82,7 +82,7 @@ return true;
 }
 static std::unique_ptr<DiffusionMNNPipeline> sDiffusionPipeline;
 static std::unique_ptr<UpscaleNCNNPipeline> sUpscalePipeline;
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_com_aipipe_app_NativePipelineBridge_nativeInit(JNIEnv* env,jobject thiz,jstring modelDir_,jstring unetPath_,jstring vaePath_,jstring textEncoderPath_){
 const char* modelDirC=modelDir_?env->GetStringUTFChars(modelDir_,nullptr):nullptr;
 const char* unetPathC=unetPath_?env->GetStringUTFChars(unetPath_,nullptr):nullptr;
@@ -99,12 +99,18 @@ if(textEncoderPath_&&textEncoderPathC)env->ReleaseStringUTFChars(textEncoderPath
 LOGI("Native init: modelDir='%s', unet='%s', vae='%s', text='%s'", modelDir.c_str(), unetPath.c_str(), vaePath.c_str(), textEncoderPath.c_str());
 sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
 sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
-bool mnnOk=sDiffusionPipeline->initialize(modelDir,unetPath,vaePath,textEncoderPath);
-bool ncnnOk=sUpscalePipeline->initialize(modelDir);
-LOGI("Native engines initialized. MNN: %s, NCNN: %s", mnnOk?"OK":"FAIL", ncnnOk?"OK":"FAIL");
-return static_cast<jboolean>(mnnOk&&ncnnOk);
+int mnnRes=sDiffusionPipeline->initialize(modelDir,unetPath,vaePath,textEncoderPath);
+if(mnnRes!=0){
+LOGE("Diffusion pipeline init failed with code %d", mnnRes);
+return static_cast<jint>(mnnRes);
 }
-extern "C" JNIEXPORT jboolean JNICALL
+bool ncnnOk=sUpscalePipeline->initialize(modelDir);
+if(!ncnnOk){
+LOGW("Upscale pipeline init returned false");
+}
+return 0;
+}
+extern "C" JNIEXPORT jint JNICALL
 Java_com_aipipe_app_NativePipelineBridge_nativeInitInternal(JNIEnv* env,jobject thiz,jstring modelDir_,jstring unetPath_,jstring vaePath_,jstring textEncoderPath_){
 return Java_com_aipipe_app_NativePipelineBridge_nativeInit(env,thiz,modelDir_,unetPath_,vaePath_,textEncoderPath_);
 }
@@ -116,7 +122,10 @@ std::string prompt=promptC?promptC:"";
 LOGI("Starting execution pipeline. Timeout: %ds, Target: %dx%d, Prompt: '%s'", timeoutSec, targetW, targetH, prompt.c_str());
 if(prompt_&&promptC)env->ReleaseStringUTFChars(prompt_,promptC);
 JNIProgressBridge progressBridge(env,callback);
-if(!sDiffusionPipeline)sDiffusionPipeline=std::make_unique<DiffusionMNNPipeline>();
+if(!sDiffusionPipeline||!sDiffusionPipeline->isInitialized()){
+LOGE("Diffusion pipeline is not initialized before execution");
+return nullptr;
+}
 if(!sUpscalePipeline)sUpscalePipeline=std::make_unique<UpscaleNCNNPipeline>();
 ExecutionMetrics metrics;
 std::vector<uint8_t> rgb512;

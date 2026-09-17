@@ -8,14 +8,12 @@
 #include <cstdio>
 #include <cctype>
 #include <map>
+#include <fstream>
 static bool checkFileExists(const std::string& path){
 if(path.empty())return false;
-FILE* f=fopen(path.c_str(),"rb");
-if(f){
-fclose(f);
-return true;
-}
-return false;
+std::ifstream f(path,std::ios::binary|std::ios::ate);
+if(!f.is_open()||!f.good())return false;
+return f.tellg()>0;
 }
 static std::string resolveModelPath(const std::string& providedPath, const std::string& fallbackDir, const std::string& fileName){
 if(checkFileExists(providedPath))return providedPath;
@@ -30,15 +28,15 @@ if(checkFileExists(p))return p;
 }
 return "";
 }
-static bool createMnnSession(const std::string& path, std::unique_ptr<MNN::Interpreter>& net, MNN::Session*& session){
+static int createMnnSession(const std::string& path, std::unique_ptr<MNN::Interpreter>& net, MNN::Session*& session){
 if(!checkFileExists(path)){
-LOGE("Cannot create session, model file does not exist: %s", path.c_str());
-return false;
+LOGE("Model file does not exist: %s", path.c_str());
+return -1;
 }
 net.reset(MNN::Interpreter::createFromFile(path.c_str()));
 if(!net){
 LOGE("Failed to create MNN Interpreter from %s", path.c_str());
-return false;
+return -2;
 }
 MNN::ScheduleConfig scheduleConfig;
 scheduleConfig.type=MNN_FORWARD_OPENCL;
@@ -60,13 +58,14 @@ LOGI("Successfully created OpenCL session for %s", path.c_str());
 }
 if(!session){
 LOGE("Failed to create both OpenCL and CPU session for %s", path.c_str());
-return false;
+net.reset();
+return -2;
 }
-return true;
+return 0;
 }
 DiffusionMNNPipeline::DiffusionMNNPipeline():initialized(false),latentW(64),latentH(64),latentC(4),sessionText(nullptr),sessionUNet(nullptr),sessionVae(nullptr){}
 DiffusionMNNPipeline::~DiffusionMNNPipeline(){releaseSessionAndOpenCL();}
-bool DiffusionMNNPipeline::initialize(const std::string& modelDir, const std::string& unetPath, const std::string& vaePath, const std::string& textEncoderPath){
+int DiffusionMNNPipeline::initialize(const std::string& modelDir, const std::string& unetPath, const std::string& vaePath, const std::string& textEncoderPath){
 modelsPath=modelDir;
 LOGI("Initializing MNN diffusion pipeline with OpenCL backend (MNN_OPENCL=ON, MNN_LOW_MEMORY=ON)");
 unetModelPath=resolveModelPath(unetPath,modelDir,"unet.mnn");
@@ -75,26 +74,26 @@ textModelPath=resolveModelPath(textEncoderPath,modelDir,"text_encoder.mnn");
 if(unetModelPath.empty()||vaeModelPath.empty()||textModelPath.empty()){
 LOGE("MNN models not found: unet='%s', vae='%s', text='%s'", unetModelPath.c_str(), vaeModelPath.c_str(), textModelPath.c_str());
 initialized=false;
-return false;
+return -1;
 }
-if(!createMnnSession(textModelPath,netText,sessionText)){
-LOGE("Failed to initialize text_encoder session from %s", textModelPath.c_str());
+int resText=createMnnSession(textModelPath,netText,sessionText);
+if(resText!=0){
 initialized=false;
-return false;
+return resText;
 }
-if(!createMnnSession(unetModelPath,netUNet,sessionUNet)){
-LOGE("Failed to initialize unet session from %s", unetModelPath.c_str());
+int resUnet=createMnnSession(unetModelPath,netUNet,sessionUNet);
+if(resUnet!=0){
 initialized=false;
-return false;
+return resUnet;
 }
-if(!createMnnSession(vaeModelPath,netVae,sessionVae)){
-LOGE("Failed to initialize vae_decoder session from %s", vaeModelPath.c_str());
+int resVae=createMnnSession(vaeModelPath,netVae,sessionVae);
+if(resVae!=0){
 initialized=false;
-return false;
+return resVae;
 }
 initialized=true;
 LOGI("All MNN diffusion models loaded and sessions initialized successfully");
-return true;
+return 0;
 }
 bool DiffusionMNNPipeline::isInitialized() const{return initialized;}
 void DiffusionMNNPipeline::tokenizePrompt(const std::string& prompt, std::vector<int32_t>& tokens){
@@ -254,8 +253,8 @@ netVae.reset();
 initialized=false;
 }
 bool DiffusionMNNPipeline::generateImage(const std::string& prompt, std::vector<uint8_t>& outRgb512, IProgressCallback* callback){
-if(!initialized){
-LOGE("DiffusionMNNPipeline is not initialized or model files are missing");
+if(!initialized||!netText||!sessionText||!netUNet||!sessionUNet||!netVae||!sessionVae){
+LOGE("DiffusionMNNPipeline is not initialized or model sessions are null");
 return false;
 }
 auto startGenTime=std::chrono::steady_clock::now();

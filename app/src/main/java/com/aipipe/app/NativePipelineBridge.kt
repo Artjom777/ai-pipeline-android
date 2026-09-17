@@ -34,16 +34,16 @@ Log.e(TAG, "Failed loading native_pipeline", t)
 }
 }
 fun isNativeLoaded(): Boolean = isLoaded
-fun nativeInit(modelDir: String, unetPath: String, vaePath: String, textEncoderPath: String): Boolean {
+fun nativeInit(modelDir: String, unetPath: String, vaePath: String, textEncoderPath: String): Int {
 if (!isLoaded) {
 Log.e(TAG, "nativeInit: native_pipeline library is not loaded")
-return false
+return -2
 }
 return try {
 nativeInitInternal(modelDir, unetPath, vaePath, textEncoderPath)
 } catch (t: Throwable) {
 Log.e(TAG, "nativeInitInternal error", t)
-false
+-2
 }
 }
 fun nativeExecutePipeline(
@@ -74,7 +74,7 @@ nativeReleaseInternal()
 Log.e(TAG, "nativeReleaseInternal error", t)
 }
 }
-private external fun nativeInitInternal(modelDir: String, unetPath: String, vaePath: String, textEncoderPath: String): Boolean
+private external fun nativeInitInternal(modelDir: String, unetPath: String, vaePath: String, textEncoderPath: String): Int
 private external fun nativeExecutePipelineInternal(
 prompt: String,
 timeoutSec: Int,

@@ -55,12 +55,13 @@ val text = extractModelIfMissing(context, "text_encoder.mnn")
 val unetPath = resolvePath(unet, "unet.mnn")
 val vaePath = resolvePath(vae, "vae_decoder.mnn")
 val textPath = resolvePath(text, "text_encoder.mnn")
-val ok = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
-if (ok) {
+val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
+if (initCode == 0) {
 Log.i("AI_PIPE", "Native pipeline initialized successfully on startup")
 _uiState.update { it.copy(statusMessage = "Модели MNN загружены") }
 } else {
-Log.w("AI_PIPE", "Native pipeline awaiting models: unet=$unetPath, vae=$vaePath, text=$textPath")
+val err = if (initCode == -1) "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}" else "Ошибка инициализации MNN (код $initCode)"
+Log.w("AI_PIPE", err)
 _uiState.update { it.copy(statusMessage = "Готов к запуску") }
 }
 } catch (t: Throwable) {
@@ -86,6 +87,9 @@ output.flush()
 Log.i("AI_PIPE", "Extracted asset $fileName to ${targetFile.absolutePath}")
 } catch (e: Exception) {
 Log.w("AI_PIPE", "Asset $fileName not found in assets: ${e.message}")
+if (targetFile.exists() && targetFile.length() == 0L) {
+targetFile.delete()
+}
 }
 }
 return targetFile
@@ -154,10 +158,10 @@ val text = extractModelIfMissing(context, "text_encoder.mnn")
 val unetPath = resolvePath(unet, "unet.mnn")
 val vaePath = resolvePath(vae, "vae_decoder.mnn")
 val textPath = resolvePath(text, "text_encoder.mnn")
-val initOk = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
-if (!initOk) {
+val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
+if (initCode != 0) {
 timerJob?.cancel()
-val msg = "Файлы моделей не найдены: unet.mnn, vae_decoder.mnn, text_encoder.mnn"
+val msg = if (initCode == -1) "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}" else "Ошибка инициализации MNN (код $initCode)"
 Log.e("AI_PIPE", msg)
 _uiState.update {
 it.copy(
@@ -217,7 +221,7 @@ _uiState.update {
 it.copy(
 isRunning = false,
 step = PipelineStep.ERROR,
-errorMessage = "Ошибка инференса MNN/NCNN: проверьте файлы моделей"
+errorMessage = "Файлы моделей (.mnn) не найдены по пути: ${context.filesDir.absolutePath}"
 )
 }
 }
