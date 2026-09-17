@@ -14,7 +14,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Compare
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
@@ -153,7 +155,7 @@ unfocusedTextColor = TextPrimary
 ),
 shape = RoundedCornerShape(12.dp)
 )
-if (state.errorMessage != null) {
+if (!state.modelsMissing && !state.isDownloading && state.errorMessage != null) {
 Text(
 text = state.errorMessage ?: "",
 color = Color.Red,
@@ -164,7 +166,7 @@ modifier = Modifier.fillMaxWidth()
 }
 Button(
 onClick = { viewModel.startPipeline() },
-enabled = !state.isRunning,
+enabled = !state.isRunning && !state.modelsMissing && !state.isDownloading,
 modifier = Modifier
 .fillMaxWidth()
 .height(52.dp),
@@ -208,7 +210,115 @@ bitmap4K = state.bitmap4K,
 splitPos = splitPosition,
 onSplitChange = { splitPosition = it }
 )
-if (state.errorMessage != null) {
+if (state.modelsMissing || state.isDownloading) {
+Surface(
+shape = RoundedCornerShape(12.dp),
+color = CardBackground,
+border = androidx.compose.foundation.BorderStroke(1.dp, MaliOrange),
+modifier = Modifier.fillMaxWidth()
+) {
+Column(modifier = Modifier.padding(16.dp)) {
+Row(verticalAlignment = Alignment.CenterVertically) {
+Icon(
+imageVector = Icons.Default.CloudDownload,
+contentDescription = null,
+tint = MaliOrange,
+modifier = Modifier.size(24.dp)
+)
+Spacer(modifier = Modifier.width(10.dp))
+Column {
+Text(
+text = if (state.isDownloading) "Загрузка весов MNN" else "Требуются веса моделей",
+fontWeight = FontWeight.Bold,
+fontSize = 14.sp,
+color = TextPrimary
+)
+Text(
+text = "Hugging Face · unet, text_encoder, vae_decoder",
+fontSize = 11.sp,
+color = TextSecondary
+)
+}
+}
+Spacer(modifier = Modifier.height(12.dp))
+if (state.isDownloading) {
+Column(modifier = Modifier.fillMaxWidth()) {
+Row(
+modifier = Modifier.fillMaxWidth(),
+horizontalArrangement = Arrangement.SpaceBetween,
+verticalAlignment = Alignment.CenterVertically
+) {
+Text(
+text = state.downloadStatus,
+fontSize = 12.sp,
+fontWeight = FontWeight.Medium,
+color = NeonCyan,
+modifier = Modifier.weight(1f)
+)
+Text(
+text = "${(state.downloadProgress * 100).toInt()}%",
+fontSize = 13.sp,
+fontWeight = FontWeight.Bold,
+color = NeonCyan
+)
+}
+Spacer(modifier = Modifier.height(8.dp))
+LinearProgressIndicator(
+progress = { state.downloadProgress },
+modifier = Modifier
+.fillMaxWidth()
+.height(8.dp)
+.clip(RoundedCornerShape(4.dp)),
+color = NeonCyan,
+trackColor = BorderColor
+)
+Spacer(modifier = Modifier.height(6.dp))
+Row(
+modifier = Modifier.fillMaxWidth(),
+horizontalArrangement = Arrangement.SpaceBetween
+) {
+Text(
+text = "Скорость: ${state.downloadSpeed}",
+fontSize = 11.sp,
+fontWeight = FontWeight.Medium,
+color = TextSecondary
+)
+Text(
+text = "Внутренняя память",
+fontSize = 11.sp,
+color = TextSecondary
+)
+}
+}
+} else {
+Button(
+onClick = { viewModel.downloadModels() },
+modifier = Modifier
+.fillMaxWidth()
+.height(48.dp),
+shape = RoundedCornerShape(10.dp),
+colors = ButtonDefaults.buttonColors(
+containerColor = MaliOrange,
+contentColor = DarkBackground
+)
+) {
+Icon(
+imageVector = Icons.Default.Download,
+contentDescription = null,
+modifier = Modifier.size(18.dp)
+)
+Spacer(modifier = Modifier.width(8.dp))
+Text(
+text = "Скачать веса моделей (~1.2 ГБ)",
+fontWeight = FontWeight.Bold,
+fontSize = 13.sp
+)
+}
+}
+}
+}
+}
+if (!state.modelsMissing && !state.isDownloading && state.errorMessage != null) {
 Surface(
 shape = RoundedCornerShape(12.dp),
 color = Color(0x33FF0000),

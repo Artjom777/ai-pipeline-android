@@ -16,6 +16,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
 enum class PipelineStep {
 IDLE,
 STAGE_1_DIFFUSION,
@@ -38,7 +41,13 @@ val errorMessage: String? = null,
 val steps: Int = 4,
 val targetResolution: String = "4K",
 val enableLanczosFallback: Boolean = true,
-val remainingSeconds: Int = 30
+val remainingSeconds: Int = 30,
+val modelsMissing: Boolean = false,
+val missingModelsList: List<String> = emptyList(),
+val isDownloading: Boolean = false,
+val downloadProgress: Float = 0f,
+val downloadSpeed: String = "0.0 МБ/с",
+val downloadStatus: String = ""
 )
 class PipelineViewModel(application: Application) : AndroidViewModel(application) {
 private val bridge = NativePipelineBridge()
@@ -54,9 +63,15 @@ extractModelIfMissing(context, "text_encoder.mnn")
 extractModelIfMissing(context, "vae_decoder.mnn")
 val missing = getMissingModels(context)
 if (missing.isNotEmpty()) {
-val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
-Log.w("AI_PIPE", msg)
-_uiState.update { it.copy(statusMessage = "Файлы моделей не найдены", errorMessage = msg) }
+Log.w("AI_PIPE", "Missing models on startup: ${missing.joinToString(", ")}")
+_uiState.update {
+it.copy(
+statusMessage = "Требуется загрузка моделей",
+modelsMissing = true,
+missingModelsList = missing,
+errorMessage = null
+)
+}
 return@launch
 }
 val unetPath = File(context.filesDir, "unet.mnn").absolutePath
@@ -134,19 +149,168 @@ _uiState.update { it.copy(targetResolution = resolution) }
 fun setLanczosFallback(enabled: Boolean) {
 _uiState.update { it.copy(enableLanczosFallback = enabled) }
 }
+fun downloadModels() {
+if (_uiState.value.isDownloading) return
+_uiState.update {
+it.copy(
+isDownloading = true,
+downloadProgress = 0f,
+downloadSpeed = "0.0 МБ/с",
+downloadStatus = "Подготовка к загрузке...",
+errorMessage = null
+)
+}
+viewModelScope.launch(Dispatchers.IO) {
+try {
+val context = getApplication<Application>().applicationContext
+val models = listOf(
+Pair("text_encoder.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/text_encoder.mnn"),
+Pair("unet.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/unet.mnn"),
+Pair("vae_decoder.mnn", "https://huggingface.co/leejet/stable-diffusion-v1-5-mnn/resolve/main/vae_decoder.mnn")
+)
+val totalModels = models.size
+var completedModels = 0
+for ((fileName, urlStr) in models) {
+val targetFile = File(context.filesDir, fileName)
+if (targetFile.exists() && targetFile.length() > 1000L) {
+completedModels++
+_uiState.update {
+it.copy(
+downloadProgress = completedModels.toFloat() / totalModels.toFloat(),
+downloadStatus = "$fileName готов ($completedModels/$totalModels)"
+)
+}
+continue
+}
+val tempFile = File(context.filesDir, "$fileName.download")
+if (tempFile.exists()) tempFile.delete()
+_uiState.update {
+it.copy(
+downloadStatus = "Скачивание $fileName (${completedModels + 1}/$totalModels)..."
+)
+}
+downloadFileWithProgress(urlStr, tempFile) { bytesRead, totalBytes, speedMBs ->
+val fileProgress = if (totalBytes > 0) bytesRead.toFloat() / totalBytes.toFloat() else 0f
+val overallProgress = (completedModels.toFloat() + fileProgress) / totalModels.toFloat()
+val speedText = String.format(Locale.US, "%.1f МБ/с", speedMBs)
+_uiState.update {
+it.copy(
+downloadProgress = overallProgress.coerceIn(0f, 1f),
+downloadSpeed = speedText,
+downloadStatus = "Скачивание $fileName: ${(fileProgress * 100).toInt()}%"
+)
+}
+}
+if (tempFile.exists() && tempFile.length() > 0L) {
+if (targetFile.exists()) targetFile.delete()
+tempFile.renameTo(targetFile)
+}
+completedModels++
+}
+val missing = getMissingModels(context)
+if (missing.isEmpty()) {
+val unetPath = File(context.filesDir, "unet.mnn").absolutePath
+val textPath = File(context.filesDir, "text_encoder.mnn").absolutePath
+val vaePath = File(context.filesDir, "vae_decoder.mnn").absolutePath
+val initCode = bridge.nativeInit(context.filesDir.absolutePath, unetPath, vaePath, textPath)
+_uiState.update {
+it.copy(
+isDownloading = false,
+modelsMissing = false,
+downloadProgress = 1f,
+statusMessage = if (initCode == 0) "Модели MNN загружены" else "Готов к запуску",
+errorMessage = null
+)
+}
+} else {
+_uiState.update {
+it.copy(
+isDownloading = false,
+modelsMissing = true,
+errorMessage = "Не удалось загрузить: ${missing.joinToString(", ")}"
+)
+}
+}
+} catch (t: Throwable) {
+Log.e("AI_PIPE", "Model download failed", t)
+_uiState.update {
+it.copy(
+isDownloading = false,
+errorMessage = "Ошибка скачивания: ${t.message}"
+)
+}
+}
+}
+}
+private fun downloadFileWithProgress(
+urlStr: String,
+destination: File,
+onProgress: (bytesRead: Long, totalBytes: Long, speedMBs: Float) -> Unit
+) {
+var currentUrl = urlStr
+var connection: HttpURLConnection? = null
+var redirects = 0
+while (redirects < 5) {
+val url = URL(currentUrl)
+connection = url.openConnection() as HttpURLConnection
+connection.instanceFollowRedirects = true
+connection.connectTimeout = 30000
+connection.readTimeout = 60000
+connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+val code = connection.responseCode
+if (code == HttpURLConnection.HTTP_MOVED_PERM ||
+code == HttpURLConnection.HTTP_MOVED_TEMP ||
+code == 307 || code == 308) {
+val newUrl = connection.getHeaderField("Location")
+connection.disconnect()
+if (newUrl != null) {
+currentUrl = newUrl
+redirects++
+continue
+}
+}
+break
+}
+val conn = connection ?: throw java.io.IOException("Failed to connect to $urlStr")
+val totalBytes = conn.contentLengthLong
+conn.inputStream.use { input ->
+FileOutputStream(destination).use { output ->
+val buffer = ByteArray(65536)
+var bytesReadTotal = 0L
+var lastTime = System.currentTimeMillis()
+var lastBytes = 0L
+var speedMBs = 0f
+var read: Int
+while (input.read(buffer).also { read = it } != -1) {
+output.write(buffer, 0, read)
+bytesReadTotal += read
+val now = System.currentTimeMillis()
+val elapsed = now - lastTime
+if (elapsed >= 500) {
+val bytesInInterval = bytesReadTotal - lastBytes
+speedMBs = (bytesInInterval.toFloat() / (elapsed.toFloat() / 1000f)) / (1024f * 1024f)
+lastTime = now
+lastBytes = bytesReadTotal
+onProgress(bytesReadTotal, totalBytes, speedMBs)
+}
+}
+output.flush()
+onProgress(bytesReadTotal, totalBytes, speedMBs)
+}
+}
+conn.disconnect()
+}
 fun startPipeline() {
-if (_uiState.value.isRunning) return
+if (_uiState.value.isRunning || _uiState.value.isDownloading) return
 val context = getApplication<Application>().applicationContext
 val missing = getMissingModels(context)
 if (missing.isNotEmpty()) {
-val msg = "Отсутствуют файлы моделей: ${missing.joinToString(", ")}. Поместите их в /data/data/com.aipipe.app/files/"
-Log.e("AI_PIPE", msg)
 _uiState.update {
 it.copy(
 isRunning = false,
-step = PipelineStep.ERROR,
-statusMessage = "Ошибка: отсутствуют файлы моделей",
-errorMessage = msg
+modelsMissing = true,
+missingModelsList = missing,
+statusMessage = "Требуется загрузка моделей"
 )
 }
 return
