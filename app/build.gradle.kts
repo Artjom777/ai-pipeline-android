@@ -63,9 +63,19 @@ android {
         kotlinCompilerExtensionVersion = "1.5.11"
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/cpp/libs")
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            excludes += "**/libOpenCL.so"
+            pickFirsts += "**/libc++_shared.so"
         }
     }
 
