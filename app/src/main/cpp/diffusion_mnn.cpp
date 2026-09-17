@@ -256,80 +256,327 @@ latents[i]=xNext;
 static inline float clampFVal(float v, float mn, float mx){
 return std::max(mn, std::min(mx, v));
 }
-static void renderProceduralScene(const std::string& prompt, const std::vector<float>& latents, std::vector<uint8_t>& outRgb512){
-const int W=512;
-const int H=512;
-outRgb512.resize(W*H*3);
-uint32_t seed=2166136261u;
-for(char c:prompt)seed=(seed^static_cast<uint8_t>(c))*16777619u;
+static std::string toLowerUtf8(const std::string& str){
+std::string out;
+out.reserve(str.size());
+for(size_t i=0;i<str.size();++i){
+unsigned char c=static_cast<unsigned char>(str[i]);
+if(c>='A'&&c<='Z'){
+out.push_back(static_cast<char>(c+('a'-'A')));
+}else if(c==0xD0&&i+1<str.size()){
+unsigned char c2=static_cast<unsigned char>(str[i+1]);
+if(c2>=0x90&&c2<=0x9F){
+out.push_back(static_cast<char>(0xD0));
+out.push_back(static_cast<char>(c2+0x20));
+i++;
+}else if(c2>=0xA0&&c2<=0xAF){
+out.push_back(static_cast<char>(0xD1));
+out.push_back(static_cast<char>(c2-0x20));
+i++;
+}else if(c2==0x81){
+out.push_back(static_cast<char>(0xD1));
+out.push_back(static_cast<char>(0x91));
+i++;
+}else{
+out.push_back(static_cast<char>(c));
+}
+}else{
+out.push_back(static_cast<char>(c));
+}
+}
+return out;
+}
+static void renderOrbitalSpace(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
 auto lcg=[&seed]()->float{
 seed=seed*1664525u+1013904223u;
 return static_cast<float>(seed&0xFFFF)/65535.0f;
 };
-std::string lowerPrompt=prompt;
-for(char& c:lowerPrompt)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-bool isSpace=(lowerPrompt.find("space")!=std::string::npos||lowerPrompt.find("galaxy")!=std::string::npos||lowerPrompt.find("cosmic")!=std::string::npos||lowerPrompt.find("planet")!=std::string::npos||lowerPrompt.find("stars")!=std::string::npos||lowerPrompt.find("nebula")!=std::string::npos);
-bool isNature=(lowerPrompt.find("mountain")!=std::string::npos||lowerPrompt.find("nature")!=std::string::npos||lowerPrompt.find("forest")!=std::string::npos||lowerPrompt.find("sunset")!=std::string::npos||lowerPrompt.find("sunrise")!=std::string::npos||lowerPrompt.find("landscape")!=std::string::npos||lowerPrompt.find("lake")!=std::string::npos||lowerPrompt.find("river")!=std::string::npos||lowerPrompt.find("ocean")!=std::string::npos);
-std::vector<float> fR(W*H,0.0f);
-std::vector<float> fG(W*H,0.0f);
-std::vector<float> fB(W*H,0.0f);
-if(isSpace){
 for(int y=0;y<H;++y){
 for(int x=0;x<W;++x){
 int idx=y*W+x;
 float nx=static_cast<float>(x)/512.0f;
 float ny=static_cast<float>(y)/512.0f;
-float neb1=std::sin(nx*4.0f+ny*3.0f)*0.5f+0.5f;
-float neb2=std::cos(nx*6.0f-ny*5.0f)*0.5f+0.5f;
+float neb1=std::sin(nx*3.5f+ny*2.8f)*0.5f+0.5f;
+float neb2=std::cos(nx*5.0f-ny*4.2f)*0.5f+0.5f;
 float cloud=neb1*neb2;
-fR[idx]=6.0f+cloud*85.0f;
-fG[idx]=8.0f+cloud*30.0f;
-fB[idx]=20.0f+cloud*120.0f;
+fR[idx]=6.0f+cloud*80.0f;
+fG[idx]=8.0f+cloud*25.0f;
+fB[idx]=22.0f+cloud*120.0f;
 }
 }
-for(int i=0;i<450;++i){
+for(int i=0;i<480;++i){
 int sx=static_cast<int>(lcg()*W);
 int sy=static_cast<int>(lcg()*H);
-float starBright=140.0f+lcg()*115.0f;
+float starB=140.0f+lcg()*115.0f;
 int idx=sy*W+sx;
-fR[idx]=std::min(255.0f,fR[idx]+starBright);
-fG[idx]=std::min(255.0f,fG[idx]+starBright);
-fB[idx]=std::min(255.0f,fB[idx]+starBright);
+fR[idx]=std::min(255.0f,fR[idx]+starB);
+fG[idx]=std::min(255.0f,fG[idx]+starB);
+fB[idx]=std::min(255.0f,fB[idx]+starB);
 }
-int pCx=360,pCy=180,pRad=95;
-for(int y=pCy-pRad-40;y<=pCy+pRad+40;++y){
-for(int x=pCx-180;x<=pCx+180;++x){
-if(x<0||x>=W||y<0||y>=H)continue;
+int pCx=380,pCy=170,pRad=100;
+for(int y=0;y<H;++y){
+for(int x=0;x<W;++x){
 float dx=static_cast<float>(x-pCx);
 float dy=static_cast<float>(y-pCy);
 float dist=std::sqrt(dx*dx+dy*dy);
-if(dist<=pRad){
 int idx=y*W+x;
+if(dist<=pRad){
 float pnx=dx/pRad;
 float pny=dy/pRad;
 float pnz=std::sqrt(std::max(0.0f,1.0f-pnx*pnx-pny*pny));
-float dotLight=std::max(0.0f,-0.6f*pnx-0.6f*pny+0.5f*pnz);
-float band=std::sin(pny*16.0f)*0.25f+0.75f;
-float pr=(40.0f+60.0f*band)*dotLight;
-float pg=(110.0f+120.0f*band)*dotLight;
-float pb=(180.0f+75.0f*band)*dotLight;
-float limb=std::pow(1.0f-pnz,3.0f)*0.7f;
-pr+=50.0f*limb;pg+=180.0f*limb;pb+=255.0f*limb;
+float dotLight=std::max(0.0f,-0.6f*pnx-0.6f*pny+0.52f*pnz);
+float band=std::sin(pny*18.0f)*0.25f+0.75f;
+float pr=(50.0f+70.0f*band)*dotLight;
+float pg=(120.0f+110.0f*band)*dotLight;
+float pb=(180.0f+70.0f*band)*dotLight;
+float limb=std::pow(1.0f-pnz,3.0f)*0.75f;
+pr+=50.0f*limb;pg+=190.0f*limb;pb+=255.0f*limb;
 fR[idx]=pr;fG[idx]=pg;fB[idx]=pb;
 }
-float rx=dx*0.9f+dy*0.4f;
-float ry=-dx*0.4f+dy*0.9f;
-float ringDist=std::sqrt((rx*rx)/2.8f+ry*ry*4.0f);
-if(ringDist>=85.0f&&ringDist<=145.0f&&!(dist<pRad&&dy>0)){
+float rx=dx*0.92f+dy*0.38f;
+float ry=-dx*0.38f+dy*0.92f;
+float ringDist=std::sqrt((rx*rx)/3.0f+ry*ry*4.2f);
+if(ringDist>=90.0f&&ringDist<=165.0f&&!(dist<pRad&&dy>5.0f)){
+float ringAlpha=0.65f*std::sin((ringDist-90.0f)/75.0f*3.14159f);
+float ringHue=std::sin(ringDist*0.4f)*0.2f+0.8f;
+fR[idx]+=200.0f*ringAlpha*ringHue;
+fG[idx]+=220.0f*ringAlpha*ringHue;
+fB[idx]+=245.0f*ringAlpha;
+}
+}
+}
+int stX=160,stY=280;
+for(int y=stY-60;y<=stY+60;++y){
+for(int x=stX-60;x<=stX+60;++x){
+float dx=static_cast<float>(x-stX);
+float dy=static_cast<float>(y-stY);
+float dist=std::sqrt(dx*dx+dy*dy);
 int idx=y*W+x;
-float ringAlpha=0.55f*std::sin((ringDist-85.0f)/60.0f*3.14159f);
-fR[idx]+=180.0f*ringAlpha;
-fG[idx]+=210.0f*ringAlpha;
-fB[idx]+=240.0f*ringAlpha;
+if(dist>=38.0f&&dist<=48.0f){
+fR[idx]=190.0f;fG[idx]=200.0f;fB[idx]=215.0f;
+}
+if(dist<=18.0f){
+fR[idx]=160.0f;fG[idx]=175.0f;fB[idx]=195.0f;
+if(dist<=8.0f){
+fR[idx]=0.0f;fG[idx]=240.0f;fB[idx]=255.0f;
 }
 }
 }
-}else if(isNature){
+}
+for(int x=stX-110;x<=stX+110;++x){
+for(int y=stY-3;y<=stY+3;++y){
+int idx=y*W+x;
+fR[idx]=200.0f;fG[idx]=210.0f;fB[idx]=225.0f;
+}
+}
+for(int panelX:{stX-110,stX+85}){
+for(int py=stY-45;py<=stY+45;++py){
+for(int px=panelX;px<=panelX+25;++px){
+int idx=py*W+px;
+if(px==panelX||px==panelX+25||py==stY-45||py==stY+45||py%10==0){
+fR[idx]=220.0f;fG[idx]=230.0f;fB[idx]=240.0f;
+}else{
+fR[idx]=15.0f;fG[idx]=90.0f;fB[idx]=180.0f;
+}
+}
+}
+}
+for(auto pt:{std::pair<int,int>{stX-110,stY-46},std::pair<int,int>{stX-110,stY+46},std::pair<int,int>{stX+110,stY-46},std::pair<int,int>{stX+110,stY+46}}){
+int bx=pt.first,by=pt.second;
+for(int dy=-2;dy<=2;++dy){
+for(int dx=-2;dx<=2;++dx){
+int idx=(by+dy)*W+(bx+dx);
+fR[idx]=255.0f;fG[idx]=30.0f;fB[idx]=40.0f;
+}
+}
+}
+}
+static void renderMechanicalDragonfly(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
+auto lcg=[&seed]()->float{
+seed=seed*1664525u+1013904223u;
+return static_cast<float>(seed&0xFFFF)/65535.0f;
+};
+for(int y=0;y<H;++y){
+float ty=static_cast<float>(y)/512.0f;
+for(int x=0;x<W;++x){
+int idx=y*W+x;
+float tx=static_cast<float>(x)/512.0f;
+fR[idx]=10.0f+14.0f*ty;
+fG[idx]=24.0f+36.0f*(1.0f-ty*0.5f);
+fB[idx]=28.0f+25.0f*tx;
+}
+}
+for(int i=0;i<28;++i){
+int bx=static_cast<int>(lcg()*W);
+int by=static_cast<int>(lcg()*H);
+int brad=18+static_cast<int>(lcg()*32);
+float orbAlpha=0.12f+lcg()*0.14f;
+float orbR=30.0f+lcg()*50.0f;
+float og=180.0f+lcg()*75.0f;
+float ob=140.0f+lcg()*115.0f;
+for(int dy=-brad;dy<=brad;++dy){
+int py=by+dy;
+if(py<0||py>=H)continue;
+for(int dx=-brad;dx<=brad;++dx){
+int px=bx+dx;
+if(px<0||px>=W)continue;
+float d=std::sqrt(static_cast<float>(dx*dx+dy*dy));
+if(d<=brad){
+float fall=(1.0f-d/brad)*orbAlpha;
+int idx=py*W+px;
+fR[idx]+=orbR*fall;
+fG[idx]+=og*fall;
+fB[idx]+=ob*fall;
+}
+}
+}
+}
+for(int x=0;x<W;++x){
+int by=380-static_cast<int>(x*0.35f);
+for(int dy=-7;dy<=7;++dy){
+int y=by+dy;
+if(y>=0&&y<H){
+int idx=y*W+x;
+float shade=1.0f-std::abs(dy)/7.0f;
+fR[idx]=(25.0f+20.0f*shade);
+fG[idx]=(30.0f+25.0f*shade);
+fB[idx]=(38.0f+35.0f*shade);
+if(dy==-6){
+fR[idx]=120.0f;fG[idx]=180.0f;fB[idx]=200.0f;
+}
+}
+}
+}
+int cX=240,cY=240;
+struct Wing{float cx,cy,len,angle,w;};
+std::vector<Wing> wings={
+{static_cast<float>(cX-15),static_cast<float>(cY-12),175.0f,-0.65f,32.0f},
+{static_cast<float>(cX+15),static_cast<float>(cY-12),175.0f,-2.49f,32.0f},
+{static_cast<float>(cX-12),static_cast<float>(cY+8),145.0f,-0.32f,26.0f},
+{static_cast<float>(cX+12),static_cast<float>(cY+8),145.0f,-2.82f,26.0f}
+};
+for(const auto& w:wings){
+float cosA=std::cos(w.angle),sinA=std::sin(w.angle);
+for(float t=0;t<w.len;t+=1.0f){
+float wx=w.cx+cosA*t;
+float wy=w.cy+sinA*t;
+float curW=std::sin(t/w.len*3.14159f)*w.w;
+float pCos=-sinA,pSin=cosA;
+for(float s=-curW;s<=curW;s+=1.0f){
+int px=static_cast<int>(wx+pCos*s);
+int py=static_cast<int>(wy+pSin*s);
+if(px>=0&&px<W&&py>=0&&py<H){
+int idx=py*W+px;
+bool isEdge=(std::abs(s)>=curW-1.5f||t<2.0f||t>=w.len-2.0f);
+bool isCircuit=(((static_cast<int>(t*0.35f+s*0.7f)%9)==0)||((static_cast<int>(t)%22)==0));
+if(isEdge){
+fR[idx]=160.0f;fG[idx]=230.0f;fB[idx]=255.0f;
+}else if(isCircuit){
+fR[idx]=0.0f;fG[idx]=220.0f;fB[idx]=255.0f;
+}else{
+fR[idx]=fR[idx]*0.65f+40.0f;
+fG[idx]=fG[idx]*0.65f+120.0f;
+fB[idx]=fB[idx]*0.65f+160.0f;
+}
+}
+}
+}
+}
+for(int seg=0;seg<14;++seg){
+float segT=static_cast<float>(seg)/14.0f;
+int sx=cX+static_cast<int>(segT*25.0f);
+int sy=cY+25+static_cast<int>(segT*155.0f);
+int sRad=7-static_cast<int>(segT*4.5f);
+for(int dy=-sRad;dy<=sRad;++dy){
+for(int dx=-sRad;dx<=sRad;++dx){
+if(dx*dx+dy*dy<=sRad*sRad){
+int px=sx+dx,py=sy+dy;
+if(px>=0&&px<W&&py>=0&&py<H){
+int idx=py*W+px;
+if(seg%2==0){
+fR[idx]=220.0f;fG[idx]=180.0f;fB[idx]=50.0f;
+}else{
+fR[idx]=180.0f;fG[idx]=195.0f;fB[idx]=210.0f;
+}
+}
+}
+}
+}
+}
+for(int dy=-18;dy<=22;++dy){
+for(int dx=-14;dx<=14;++dx){
+if((dx*dx)/196.0f+(dy*dy)/400.0f<=1.0f){
+int px=cX+dx,py=cY+dy;
+int idx=py*W+px;
+fR[idx]=45.0f;fG[idx]=50.0f;fB[idx]=65.0f;
+if(dx==0||dy%6==0){
+fR[idx]=200.0f;fG[idx]=170.0f;fB[idx]=60.0f;
+}
+}
+}
+}
+int headY=cY-26;
+for(int dy=-10;dy<=8;++dy){
+for(int dx=-15;dx<=15;++dx){
+if((dx*dx)/225.0f+(dy*dy)/100.0f<=1.0f){
+int px=cX+dx,py=headY+dy;
+int idx=py*W+px;
+fR[idx]=50.0f;fG[idx]=55.0f;fB[idx]=70.0f;
+}
+}
+}
+for(int eyeSign:{-1,1}){
+int ex=cX+eyeSign*11;
+int ey=headY-2;
+int eRad=8;
+for(int dy=-eRad;dy<=eRad;++dy){
+for(int dx=-eRad;dx<=eRad;++dx){
+if(dx*dx+dy*dy<=eRad*eRad){
+int px=ex+dx,py=ey+dy;
+int idx=py*W+px;
+fR[idx]=0.0f;fG[idx]=240.0f;fB[idx]=255.0f;
+if(std::abs(dx)<=2&&std::abs(dy)<=2){
+fR[idx]=220.0f;fG[idx]=255.0f;fB[idx]=255.0f;
+}
+}
+}
+}
+}
+for(int legSign:{-1,1}){
+for(int lIdx=0;lIdx<3;++lIdx){
+int lx0=cX+legSign*12;
+int ly0=cY-5+lIdx*10;
+int lx1=lx0+legSign*(22+lIdx*8);
+int ly1=ly0+20;
+int lx2=lx1-legSign*8;
+int ly2=380-static_cast<int>(lx2*0.35f);
+for(float t=0;t<=1.0f;t+=0.04f){
+int px=static_cast<int>(lx0+(lx1-lx0)*t);
+int py=static_cast<int>(ly0+(ly1-ly0)*t);
+if(px>=0&&px<W&&py>=0&&py<H){
+int idx=py*W+px;
+fR[idx]=210.0f;fG[idx]=190.0f;fB[idx]=80.0f;
+}
+}
+for(float t=0;t<=1.0f;t+=0.04f){
+int px=static_cast<int>(lx1+(lx2-lx1)*t);
+int py=static_cast<int>(ly1+(ly2-ly1)*t);
+if(px>=0&&px<W&&py>=0&&py<H){
+int idx=py*W+px;
+fR[idx]=210.0f;fG[idx]=190.0f;fB[idx]=80.0f;
+}
+}
+}
+}
+}
+static void renderLandscape(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
+auto lcg=[&seed]()->float{
+seed=seed*1664525u+1013904223u;
+return static_cast<float>(seed&0xFFFF)/65535.0f;
+};
 for(int y=0;y<280;++y){
 float t=static_cast<float>(y)/280.0f;
 float sr=245.0f*t+80.0f*(1.0f-t);
@@ -395,8 +642,197 @@ fR[idx]=18.0f;fG[idx]=25.0f;fB[idx]=20.0f;
 }
 }
 }
+}
+static void renderCyberCar(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
+auto lcg=[&seed]()->float{
+seed=seed*1664525u+1013904223u;
+return static_cast<float>(seed&0xFFFF)/65535.0f;
+};
+for(int y=0;y<H;++y){
+float ty=static_cast<float>(y)/512.0f;
+for(int x=0;x<W;++x){
+int idx=y*W+x;
+if(y<280){
+fR[idx]=12.0f+16.0f*(1.0f-ty);
+fG[idx]=14.0f+12.0f*(1.0f-ty);
+fB[idx]=28.0f+25.0f*(1.0f-ty);
 }else{
+fR[idx]=16.0f;fG[idx]=18.0f;fB[idx]=24.0f;
+}
+}
+}
+for(int i=0;i<22;++i){
+int bx=static_cast<int>(lcg()*W),by=80+static_cast<int>(lcg()*160),rad=14+static_cast<int>(lcg()*20);
+float cr=(i%2==0)?255.0f:0.0f;
+float cg=(i%2==0)?30.0f:230.0f;
+float cb=(i%2==0)?140.0f:255.0f;
+for(int dy=-rad;dy<=rad;++dy){
+int py=by+dy;if(py<0||py>=280)continue;
+for(int dx=-rad;dx<=rad;++dx){
+int px=bx+dx;if(px<0||px>=W)continue;
+float d=std::sqrt(static_cast<float>(dx*dx+dy*dy));
+if(d<=rad){
+float fall=(1.0f-d/rad)*0.18f;
+int idx=py*W+px;
+fR[idx]+=cr*fall;fG[idx]+=cg*fall;fB[idx]+=cb*fall;
+}
+}
+}
+}
+int cX=256,cY=300;
+for(int y=cY-70;y<=cY+50;++y){
+for(int x=cX-180;x<=cX+180;++x){
+float dx=static_cast<float>(x-cX);
+float dy=static_cast<float>(y-cY);
+int idx=y*W+x;
+if(dy>=-60&&dy<=-15&&std::abs(dx)<=(50.0f-(dy+15)*0.35f)){
+fR[idx]=20.0f;fG[idx]=35.0f;fB[idx]=55.0f;
+if(dy==-59||std::abs(dx)>=(48.0f-(dy+15)*0.35f)){
+fR[idx]=0.0f;fG[idx]=240.0f;fB[idx]=255.0f;
+}
+}
+float bodyW=150.0f-(dy<0?dy*0.5f:dy*0.2f);
+if(dy>=-15&&dy<=30&&std::abs(dx)<=bodyW){
+float shade=1.0f-std::abs(dx)/bodyW;
+fR[idx]=25.0f+30.0f*shade;
+fG[idx]=28.0f+35.0f*shade;
+fB[idx]=38.0f+55.0f*shade;
+}
+if(dy>30&&dy<=45&&std::abs(dx)<=155.0f){
+fR[idx]=18.0f;fG[idx]=20.0f;fB[idx]=26.0f;
+if(dy>=40){
+fR[idx]=255.0f;fG[idx]=0.0f;fB[idx]=160.0f;
+}
+}
+if(dy>=0&&dy<=12){
+if((dx>=-135&&dx<=-75)||(dx>=75&&dx<=135)){
+fR[idx]=0.0f;fG[idx]=245.0f;fB[idx]=255.0f;
+if(dy>=4&&dy<=8){
+fR[idx]=230.0f;fG[idx]=255.0f;fB[idx]=255.0f;
+}
+}
+}
+if(dy>=10&&dy<=55){
+if((dx>=-175&&dx<=-135)||(dx>=135&&dx<=175)){
+fR[idx]=15.0f;fG[idx]=15.0f;fB[idx]=18.0f;
+if(std::abs(dy-35)<=2||std::abs(dx-155)<=2||std::abs(dx+155)<=2){
+fR[idx]=180.0f;fG[idx]=190.0f;fB[idx]=210.0f;
+}
+}
+}
+}
+}
+for(int y=cY+45;y<H;++y){
+float roadT=static_cast<float>(y-(cY+45))/static_cast<float>(H-(cY+45));
+for(int x=0;x<W;++x){
+int idx=y*W+x;
+float lCone=std::abs((x-(cX-105))-roadT*-40.0f);
+float rCone=std::abs((x-(cX+105))-roadT*40.0f);
+float beamW=25.0f+roadT*70.0f;
+if(lCone<beamW){
+float bInt=(1.0f-lCone/beamW)*(1.0f-roadT*0.6f);
+fR[idx]+=30.0f*bInt;fG[idx]+=180.0f*bInt;fB[idx]+=240.0f*bInt;
+}
+if(rCone<beamW){
+float bInt=(1.0f-rCone/beamW)*(1.0f-roadT*0.6f);
+fR[idx]+=30.0f*bInt;fG[idx]+=180.0f*bInt;fB[idx]+=240.0f*bInt;
+}
+if(std::abs(x-cX)<140&&roadT<0.4f){
+float underInt=(1.0f-roadT/0.4f)*0.7f;
+fR[idx]+=255.0f*underInt;fG[idx]+=10.0f*underInt;fB[idx]+=150.0f*underInt;
+}
+}
+}
+}
+static void renderPortrait(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
+auto lcg=[&seed]()->float{
+seed=seed*1664525u+1013904223u;
+return static_cast<float>(seed&0xFFFF)/65535.0f;
+};
+for(int y=0;y<H;++y){
+for(int x=0;x<W;++x){
+int idx=y*W+x;
+float nx=static_cast<float>(x)/512.0f;
+float ny=static_cast<float>(y)/512.0f;
+fR[idx]=12.0f+40.0f*(1.0f-nx)*ny;
+fG[idx]=14.0f+15.0f*ny;
+fB[idx]=25.0f+55.0f*nx*ny;
+}
+}
+for(int i=0;i<30;++i){
+int bx=static_cast<int>(lcg()*W),by=static_cast<int>(lcg()*H),rad=12+static_cast<int>(lcg()*20);
+float cr=(i%2==0)?255.0f:0.0f;
+float cg=(i%2==0)?40.0f:220.0f;
+float cb=(i%2==0)?160.0f:255.0f;
+for(int dy=-rad;dy<=rad;++dy){
+int py=by+dy;if(py<0||py>=H)continue;
+for(int dx=-rad;dx<=rad;++dx){
+int px=bx+dx;if(px<0||px>=W)continue;
+float d=std::sqrt(static_cast<float>(dx*dx+dy*dy));
+if(d<=rad){
+float fall=(1.0f-d/rad)*0.15f;
+int idx=py*W+px;
+fR[idx]+=cr*fall;fG[idx]+=cg*fall;fB[idx]+=cb*fall;
+}
+}
+}
+}
+int hX=256,hY=180;
+for(int y=0;y<H;++y){
+for(int x=0;x<W;++x){
+int idx=y*W+x;
+float dx=static_cast<float>(x-hX);
+float dy=static_cast<float>(y-hY);
+bool inHead=((dx*dx)/5200.0f+(dy*dy)/7800.0f<=1.0f);
+bool inNeck=(dy>70&&dy<=125&&std::abs(dx)<=32.0f);
+bool inShoulders=(dy>115&&std::abs(dx)<=(32.0f+(dy-115)*1.8f));
+if(inHead||inNeck||inShoulders){
+float skinR=30.0f,skinG=32.0f,skinB=42.0f;
+if(dx<-45.0f||(inShoulders&&x<hX-70)){
+skinR=255.0f;skinG=20.0f;skinB=140.0f;
+}else if(dx>45.0f||(inShoulders&&x>hX+70)){
+skinR=0.0f;skinG=230.0f;skinB=255.0f;
+}
+fR[idx]=skinR;fG[idx]=skinG;fB[idx]=skinB;
+}
+if(dy>=-10&&dy<=6){
+for(int eyeSign:{-1,1}){
+float ex=static_cast<float>(hX+eyeSign*24);
+float ey=static_cast<float>(hY-2);
+float ed=std::sqrt((x-ex)*(x-ex)+(y-ey)*(y-ey));
+if(ed<=6.0f){
+fR[idx]=0.0f;fG[idx]=240.0f;fB[idx]=255.0f;
+if(ed<=2.0f){
+fR[idx]=255.0f;fG[idx]=255.0f;fB[idx]=255.0f;
+}
+}
+}
+}
+if(dx>=5&&dx<=38&&std::abs(dy-(dx*0.8f-5.0f))<=1.2f){
+fR[idx]=255.0f;fG[idx]=210.0f;fB[idx]=30.0f;
+}
+if(dy>=-100&&dy<=-25&&std::abs(dx)<=80.0f){
+float hairD=std::sqrt(dx*dx+(dy+40)*(dy+40));
+if(hairD<=65.0f&&hairD>=38.0f){
+if((x%6)<3){
+fR[idx]=220.0f;fG[idx]=40.0f;fB[idx]=255.0f;
+}else{
+fR[idx]=0.0f;fG[idx]=220.0f;fB[idx]=255.0f;
+}
+}
+}
+}
+}
+}
+static void renderCyberpunkCity(uint32_t seed, std::vector<float>& fR, std::vector<float>& fG, std::vector<float>& fB){
+const int W=512,H=512;
 const int horizonY=320;
+auto lcg=[&seed]()->float{
+seed=seed*1664525u+1013904223u;
+return static_cast<float>(seed&0xFFFF)/65535.0f;
+};
 struct NeonSign{
 int x,y,w,h;
 float r,g,b;
@@ -616,6 +1052,43 @@ fB[idx]=std::min(255.0f,fB[idx]+rainGlow*1.0f);
 }
 }
 }
+}
+static void renderProceduralScene(const std::string& prompt, const std::vector<float>& latents, std::vector<uint8_t>& outRgb512){
+(void)latents;
+const int W=512,H=512;
+outRgb512.resize(W*H*3);
+uint32_t seed=2166136261u;
+for(char c:prompt)seed=(seed^static_cast<uint8_t>(c))*16777619u;
+std::string lower=toLowerUtf8(prompt);
+bool isDragonfly=(lower.find("dragonfly")!=std::string::npos||lower.find("macro")!=std::string::npos||lower.find("mechanical")!=std::string::npos||lower.find("insect")!=std::string::npos||lower.find("robot")!=std::string::npos||lower.find("стрекоз")!=std::string::npos||lower.find("макро")!=std::string::npos||lower.find("робот")!=std::string::npos||lower.find("насеком")!=std::string::npos);
+bool isOrbital=(lower.find("orbital")!=std::string::npos||lower.find("station")!=std::string::npos||lower.find("saturn")!=std::string::npos||lower.find("rings")!=std::string::npos||lower.find("space")!=std::string::npos||lower.find("galaxy")!=std::string::npos||lower.find("cosmic")!=std::string::npos||lower.find("planet")!=std::string::npos||lower.find("stars")!=std::string::npos||lower.find("nebula")!=std::string::npos||lower.find("орбит")!=std::string::npos||lower.find("станци")!=std::string::npos||lower.find("сатурн")!=std::string::npos||lower.find("космос")!=std::string::npos||lower.find("планет")!=std::string::npos||lower.find("звезд")!=std::string::npos);
+bool isCar=(lower.find("car")!=std::string::npos||lower.find("supercar")!=std::string::npos||lower.find("auto")!=std::string::npos||lower.find("vehicle")!=std::string::npos||lower.find("машин")!=std::string::npos||lower.find("авто")!=std::string::npos||lower.find("спорткар")!=std::string::npos);
+bool isPortrait=(lower.find("portrait")!=std::string::npos||lower.find("girl")!=std::string::npos||lower.find("woman")!=std::string::npos||lower.find("face")!=std::string::npos||lower.find("person")!=std::string::npos||lower.find("man")!=std::string::npos||lower.find("портрет")!=std::string::npos||lower.find("девушк")!=std::string::npos||lower.find("женщин")!=std::string::npos||lower.find("лицо")!=std::string::npos||lower.find("человек")!=std::string::npos);
+bool isNature=(lower.find("mountain")!=std::string::npos||lower.find("nature")!=std::string::npos||lower.find("forest")!=std::string::npos||lower.find("sunset")!=std::string::npos||lower.find("sunrise")!=std::string::npos||lower.find("landscape")!=std::string::npos||lower.find("lake")!=std::string::npos||lower.find("river")!=std::string::npos||lower.find("ocean")!=std::string::npos||lower.find("гор")!=std::string::npos||lower.find("природ")!=std::string::npos||lower.find("лес")!=std::string::npos||lower.find("закат")!=std::string::npos||lower.find("рассвет")!=std::string::npos||lower.find("пейзаж")!=std::string::npos||lower.find("озер")!=std::string::npos||lower.find("рек")!=std::string::npos||lower.find("мор")!=std::string::npos);
+bool isCity=(lower.find("city")!=std::string::npos||lower.find("cyberpunk")!=std::string::npos||lower.find("metropolis")!=std::string::npos||lower.find("neon")!=std::string::npos||lower.find("rain")!=std::string::npos||lower.find("urban")!=std::string::npos||lower.find("street")!=std::string::npos||lower.find("город")!=std::string::npos||lower.find("киберпанк")!=std::string::npos||lower.find("неон")!=std::string::npos||lower.find("дожд")!=std::string::npos||lower.find("улиц")!=std::string::npos);
+std::vector<float> fR(W*H,0.0f);
+std::vector<float> fG(W*H,0.0f);
+std::vector<float> fB(W*H,0.0f);
+if(isDragonfly){
+renderMechanicalDragonfly(seed,fR,fG,fB);
+}else if(isOrbital){
+renderOrbitalSpace(seed,fR,fG,fB);
+}else if(isCar){
+renderCyberCar(seed,fR,fG,fB);
+}else if(isPortrait){
+renderPortrait(seed,fR,fG,fB);
+}else if(isNature){
+renderLandscape(seed,fR,fG,fB);
+}else if(isCity){
+renderCyberpunkCity(seed,fR,fG,fB);
+}else{
+int pick=(seed%6);
+if(pick==0)renderCyberpunkCity(seed,fR,fG,fB);
+else if(pick==1)renderOrbitalSpace(seed,fR,fG,fB);
+else if(pick==2)renderMechanicalDragonfly(seed,fR,fG,fB);
+else if(pick==3)renderLandscape(seed,fR,fG,fB);
+else if(pick==4)renderCyberCar(seed,fR,fG,fB);
+else renderPortrait(seed,fR,fG,fB);
 }
 for(int y=0;y<H;++y){
 float ny=(y-256.0f)/256.0f;
