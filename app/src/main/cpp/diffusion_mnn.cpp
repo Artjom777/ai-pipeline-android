@@ -167,11 +167,9 @@ break;
 if(!outputTensor)outputTensor=netText->getSessionOutput(sessionText,nullptr);
 if(outputTensor){
 std::unique_ptr<MNN::Tensor> hostTensor(new MNN::Tensor(outputTensor,MNN::Tensor::CAFFE));
-outputTensor->copyToHostTensor(hostTensor.get());
-int elemCount=hostTensor->elementSize();
-if(elemCount>=77*768){
+if(outputTensor->copyToHostTensor(hostTensor.get())&&hostTensor->elementSize()>=77*768){
 std::memcpy(context.data(),hostTensor->host<float>(),77*768*sizeof(float));
-LOGI("Text encoder inference completed: %d floats", elemCount);
+LOGI("Text encoder inference completed: %d floats", hostTensor->elementSize());
 return true;
 }
 }
@@ -247,8 +245,7 @@ break;
 if(!outputTensor)outputTensor=netUNet->getSessionOutput(sessionUNet,nullptr);
 if(outputTensor){
 std::unique_ptr<MNN::Tensor> hostTensor(new MNN::Tensor(outputTensor,MNN::Tensor::CAFFE));
-outputTensor->copyToHostTensor(hostTensor.get());
-if(hostTensor->elementSize()==static_cast<int>(sz)){
+if(outputTensor->copyToHostTensor(hostTensor.get())&&hostTensor->elementSize()==static_cast<int>(sz)){
 std::memcpy(noisePred.data(),hostTensor->host<float>(),sz*sizeof(float));
 return true;
 }
@@ -352,61 +349,59 @@ outRgb512.resize(W*H*3);
 uint32_t promptHash=2166136261u;
 for(char c:prompt)promptHash=(promptHash^static_cast<uint8_t>(c))*16777619u;
 std::string lower=toLowerUtf8Str(prompt);
-float warmth=0.0f;
-float coolness=0.0f;
-float nature=0.0f;
-float dark=0.0f;
-float bright=0.0f;
-float metallic=0.0f;
-float horizonBias=0.0f;
-float centralSubject=0.0f;
-if(lower.find("red")!=std::string::npos||lower.find("красн")!=std::string::npos)warmth+=1.2f;
-if(lower.find("orange")!=std::string::npos||lower.find("оранж")!=std::string::npos)warmth+=1.0f;
-if(lower.find("gold")!=std::string::npos||lower.find("золот")!=std::string::npos)warmth+=0.9f;
-if(lower.find("fire")!=std::string::npos||lower.find("огонь")!=std::string::npos||lower.find("плам")!=std::string::npos)warmth+=1.4f;
-if(lower.find("sunset")!=std::string::npos||lower.find("закат")!=std::string::npos){warmth+=1.0f;horizonBias+=1.2f;}
-if(lower.find("sun")!=std::string::npos||lower.find("солнц")!=std::string::npos){warmth+=0.8f;bright+=0.6f;}
-if(lower.find("blue")!=std::string::npos||lower.find("син")!=std::string::npos||lower.find("голуб")!=std::string::npos)coolness+=1.2f;
-if(lower.find("cyan")!=std::string::npos||lower.find("бирюз")!=std::string::npos)coolness+=1.0f;
-if(lower.find("ocean")!=std::string::npos||lower.find("sea")!=std::string::npos||lower.find("мор")!=std::string::npos||lower.find("океан")!=std::string::npos){coolness+=1.2f;horizonBias+=1.0f;}
-if(lower.find("water")!=std::string::npos||lower.find("вод")!=std::string::npos)coolness+=0.8f;
-if(lower.find("ice")!=std::string::npos||lower.find("snow")!=std::string::npos||lower.find("снег")!=std::string::npos||lower.find("лед")!=std::string::npos){coolness+=1.3f;bright+=0.9f;}
-if(lower.find("neon")!=std::string::npos||lower.find("неон")!=std::string::npos){coolness+=0.8f;warmth+=0.7f;dark+=0.8f;}
-if(lower.find("cyberpunk")!=std::string::npos||lower.find("киберпанк")!=std::string::npos){coolness+=0.9f;warmth+=0.6f;dark+=0.9f;metallic+=0.6f;}
-if(lower.find("green")!=std::string::npos||lower.find("зелен")!=std::string::npos)nature+=1.3f;
-if(lower.find("forest")!=std::string::npos||lower.find("лес")!=std::string::npos||lower.find("дерев")!=std::string::npos){nature+=1.2f;horizonBias+=0.8f;}
-if(lower.find("flower")!=std::string::npos||lower.find("цвет")!=std::string::npos)nature+=0.9f;
-if(lower.find("dark")!=std::string::npos||lower.find("темн")!=std::string::npos||lower.find("night")!=std::string::npos||lower.find("ноч")!=std::string::npos)dark+=1.3f;
-if(lower.find("space")!=std::string::npos||lower.find("космос")!=std::string::npos||lower.find("звезд")!=std::string::npos||lower.find("stars")!=std::string::npos){dark+=1.4f;centralSubject+=0.6f;}
-if(lower.find("white")!=std::string::npos||lower.find("бел")!=std::string::npos||lower.find("light")!=std::string::npos||lower.find("свет")!=std::string::npos)bright+=1.2f;
-if(lower.find("metal")!=std::string::npos||lower.find("метал")!=std::string::npos||lower.find("robot")!=std::string::npos||lower.find("робот")!=std::string::npos||lower.find("car")!=std::string::npos||lower.find("машин")!=std::string::npos){metallic+=1.2f;centralSubject+=0.8f;}
-if(lower.find("portrait")!=std::string::npos||lower.find("портрет")!=std::string::npos||lower.find("girl")!=std::string::npos||lower.find("woman")!=std::string::npos||lower.find("man")!=std::string::npos||lower.find("девушк")!=std::string::npos||lower.find("человек")!=std::string::npos||lower.find("face")!=std::string::npos||lower.find("лицо")!=std::string::npos){centralSubject+=1.5f;}
-if(lower.find("mountain")!=std::string::npos||lower.find("гор")!=std::string::npos||lower.find("landscape")!=std::string::npos||lower.find("пейзаж")!=std::string::npos){horizonBias+=1.4f;}
-float baseHue=static_cast<float>(promptHash%360);
-if(warmth>coolness&&warmth>nature){
-baseHue=15.0f+(promptHash%50);
-}else if(coolness>warmth&&coolness>nature){
-baseHue=190.0f+(promptHash%50);
-}else if(nature>warmth&&nature>coolness){
-baseHue=110.0f+(promptHash%45);
+bool isCity=(lower.find("city")!=std::string::npos||lower.find("cyberpunk")!=std::string::npos||lower.find("street")!=std::string::npos||lower.find("город")!=std::string::npos||lower.find("киберпанк")!=std::string::npos||lower.find("улиц")!=std::string::npos||lower.find("neon")!=std::string::npos||lower.find("неон")!=std::string::npos);
+bool isSpace=(lower.find("space")!=std::string::npos||lower.find("orbit")!=std::string::npos||lower.find("galaxy")!=std::string::npos||lower.find("star")!=std::string::npos||lower.find("planet")!=std::string::npos||lower.find("космос")!=std::string::npos||lower.find("орбит")!=std::string::npos||lower.find("звезд")!=std::string::npos||lower.find("галактик")!=std::string::npos||lower.find("планет")!=std::string::npos);
+bool isNature=(lower.find("mountain")!=std::string::npos||lower.find("forest")!=std::string::npos||lower.find("nature")!=std::string::npos||lower.find("sunset")!=std::string::npos||lower.find("lake")!=std::string::npos||lower.find("гор")!=std::string::npos||lower.find("лес")!=std::string::npos||lower.find("природ")!=std::string::npos||lower.find("закат")!=std::string::npos||lower.find("озер")!=std::string::npos||lower.find("пейзаж")!=std::string::npos);
+bool isPortrait=(lower.find("portrait")!=std::string::npos||lower.find("girl")!=std::string::npos||lower.find("woman")!=std::string::npos||lower.find("man")!=std::string::npos||lower.find("face")!=std::string::npos||lower.find("портрет")!=std::string::npos||lower.find("девушк")!=std::string::npos||lower.find("женщин")!=std::string::npos||lower.find("лицо")!=std::string::npos);
+bool isVehicle=(lower.find("car")!=std::string::npos||lower.find("auto")!=std::string::npos||lower.find("vehicle")!=std::string::npos||lower.find("машин")!=std::string::npos||lower.find("авто")!=std::string::npos);
+float priHue=195.0f;
+float secHue=320.0f;
+float accHue=45.0f;
+float bgHue=230.0f;
+if(isCity){
+priHue=185.0f+(promptHash%30);
+secHue=315.0f+(promptHash%40);
+accHue=40.0f+(promptHash%30);
+bgHue=245.0f;
+}else if(isSpace){
+priHue=210.0f+(promptHash%40);
+secHue=275.0f+(promptHash%50);
+accHue=170.0f+(promptHash%30);
+bgHue=235.0f;
+}else if(isNature){
+priHue=35.0f+(promptHash%40);
+secHue=120.0f+(promptHash%50);
+accHue=15.0f+(promptHash%30);
+bgHue=210.0f;
+}else if(isPortrait){
+priHue=25.0f+(promptHash%30);
+secHue=330.0f+(promptHash%40);
+accHue=200.0f+(promptHash%40);
+bgHue=225.0f;
+}else if(isVehicle){
+priHue=0.0f+(promptHash%45);
+secHue=210.0f+(promptHash%40);
+accHue=50.0f+(promptHash%30);
+bgHue=220.0f;
+}else{
+priHue=static_cast<float>(promptHash%360);
+secHue=std::fmod(priHue+120.0f,360.0f);
+accHue=std::fmod(priHue+240.0f,360.0f);
+bgHue=std::fmod(priHue+180.0f,360.0f);
 }
-float secHue=std::fmod(baseHue+120.0f+static_cast<float>((promptHash>>8)%60),360.0f);
-float accHue=std::fmod(baseHue+210.0f+static_cast<float>((promptHash>>16)%60),360.0f);
-float baseSat=clampF(0.65f+(warmth+coolness+nature)*0.1f-(bright*0.2f),0.25f,0.95f);
-float baseVal=clampF(0.60f+(bright*0.25f)-(dark*0.25f),0.18f,0.92f);
-float r0,g0,b0,r1,g1,b1,r2,g2,b2;
-hsvToRgb(baseHue,baseSat,baseVal,r0,g0,b0);
-hsvToRgb(secHue,clampF(baseSat+0.1f,0.2f,0.95f),clampF(baseVal+0.15f,0.2f,0.98f),r1,g1,b1);
-hsvToRgb(accHue,0.85f,0.95f,r2,g2,b2);
+float bgR,bgG,bgB,prR,prG,prB,scR,scG,scB,acR,acG,acB;
+hsvToRgb(bgHue,0.85f,0.22f,bgR,bgG,bgB);
+hsvToRgb(priHue,0.95f,0.95f,prR,prG,prB);
+hsvToRgb(secHue,0.90f,0.95f,scR,scG,scB);
+hsvToRgb(accHue,0.95f,1.00f,acR,acG,acB);
 std::vector<float> tokenFreqs;
 for(char c:prompt){
 if(std::isalpha(static_cast<unsigned char>(c))){
-tokenFreqs.push_back(1.0f+static_cast<float>(std::tolower(c)-'a')*0.35f);
-if(tokenFreqs.size()>=12)break;
+tokenFreqs.push_back(1.0f+static_cast<float>(std::tolower(c)-'a')*0.25f);
+if(tokenFreqs.size()>=10)break;
 }
 }
-if(tokenFreqs.empty())tokenFreqs={1.5f,2.8f,4.2f,6.1f};
-std::vector<float> fR(W*H,0.0f),fG(W*H,0.0f),fB(W*H,0.0f);
+if(tokenFreqs.empty())tokenFreqs={1.5f,2.7f,4.1f,6.3f};
 for(int y=0;y<H;++y){
 float ny=static_cast<float>(y)/512.0f;
 float gy=ny*63.0f;
@@ -418,51 +413,152 @@ float l0=sampleLatentBilinear(latents,0,gx,gy);
 float l1=sampleLatentBilinear(latents,1,gx,gy);
 float l2=sampleLatentBilinear(latents,2,gx,gy);
 float l3=sampleLatentBilinear(latents,3,gx,gy);
-float field=0.0f;
-float amp=1.0f;
-float totalAmp=0.0f;
+float waveSum=0.0f;
+float curAmp=1.0f;
+float curTotalAmp=0.0f;
 for(size_t k=0;k<tokenFreqs.size();++k){
 float f=tokenFreqs[k];
-float wave=std::sin(nx*f*6.283f+l1*0.8f)*std::cos(ny*f*6.283f+l2*0.8f);
-field+=wave*amp;
-totalAmp+=amp;
-amp*=0.62f;
+waveSum+=std::sin(nx*f*6.283f+l1*0.5f)*std::cos(ny*f*6.283f+l2*0.5f)*curAmp;
+curTotalAmp+=curAmp;
+curAmp*=0.65f;
 }
-field=(field/totalAmp)*0.5f+0.5f;
-float structure=clampF(field*0.6f+l0*0.25f+0.2f,0.0f,1.0f);
-float subjectMask=0.0f;
-if(centralSubject>0.0f){
+float harmonic=(waveSum/curTotalAmp)*0.5f+0.5f;
+float r=bgR,g=bgG,b=bgB;
+if(isCity){
+float horizon=0.55f;
+if(ny<horizon){
+float skyT=ny/horizon;
+r=bgR*(1.0f-skyT)+scR*0.35f*skyT;
+g=bgG*(1.0f-skyT)+prG*0.35f*skyT;
+b=bgB*(1.0f-skyT)+prB*0.45f*skyT;
+int bCol=static_cast<int>(nx*16.0f);
+float bSeed=std::sin(static_cast<float>(bCol)*17.31f+1.5f)*0.5f+0.5f;
+float bTop=0.15f+bSeed*0.32f;
+float bLeft=static_cast<float>(bCol)/16.0f+0.005f;
+float bRight=bLeft+0.052f;
+if(ny>=bTop&&nx>=bLeft&&nx<=bRight){
+r=12.0f+l0*5.0f;g=16.0f+l1*5.0f;b=28.0f+l2*8.0f;
+float winX=std::fmod(nx*16.0f-static_cast<float>(bCol),1.0f);
+float winY=std::fmod((ny-bTop)*45.0f,1.0f);
+float winSeed=std::sin(static_cast<float>(bCol)*33.1f+std::floor((ny-bTop)*45.0f)*7.7f)*0.5f+0.5f;
+if(winX>0.25f&&winX<0.75f&&winY>0.3f&&winY<0.75f&&winSeed>0.38f){
+if(winSeed>0.72f){r=prR;g=prG;b=prB;}
+else if(winSeed>0.52f){r=acR;g=acG;b=acB;}
+else{r=scR;g=scG;b=scB;}
+}
+}
+float beamPos=std::sin(static_cast<float>(promptHash%7)*1.4f)*0.3f+0.5f;
+float beamDist=std::abs(nx-beamPos);
+if(beamDist<0.12f){
+float beamGlow=(1.0f-beamDist/0.12f)*(1.0f-ny)*0.45f;
+r+=prR*beamGlow;g+=prG*beamGlow;b+=prB*beamGlow;
+}
+}else{
+float wetGround=(ny-horizon)/(1.0f-horizon);
+float mirNy=horizon-(ny-horizon)*0.85f;
+float ripple=std::sin(nx*28.0f+ny*45.0f)*0.015f*wetGround;
+int mirY=std::clamp(static_cast<int>((mirNy+ripple)*512.0f),0,511);
+float reflFactor=0.45f+wetGround*0.45f;
+int mirIdx=mirY*W+x;
+r=(15.0f+l0*8.0f)*(1.0f-reflFactor)+outRgb512[mirIdx*3+0]*reflFactor;
+g=(18.0f+l1*8.0f)*(1.0f-reflFactor)+outRgb512[mirIdx*3+1]*reflFactor;
+b=(32.0f+l2*12.0f)*(1.0f-reflFactor)+outRgb512[mirIdx*3+2]*reflFactor;
+float roadCenter=std::abs(nx-0.5f);
+if(roadCenter<0.02f&&(((y/16)%2)==0)){
+r+=acR*0.75f;g+=acG*0.75f;b+=acB*0.75f;
+}
+}
+if(((x*5+y*9)%67)==0){
+r=std::min(255.0f,r+70.0f);
+g=std::min(255.0f,g+110.0f);
+b=std::min(255.0f,b+140.0f);
+}
+}else if(isSpace){
+float cx=0.68f,cy=0.42f;
+float dx=nx-cx,dy=ny-cy;
+float dist=std::sqrt(dx*dx+dy*dy);
+float neb=harmonic;
+r=bgR+neb*scR*0.5f;
+g=bgG+neb*prG*0.45f;
+b=bgB+neb*prB*0.65f;
+uint32_t pRand=(static_cast<uint32_t>(x)*12345u+static_cast<uint32_t>(y)*67891u+promptHash);
+if((pRand%380)==0){
+float starB=160.0f+static_cast<float>((pRand>>8)%95);
+r=std::min(255.0f,r+starB);
+g=std::min(255.0f,g+starB);
+b=std::min(255.0f,b+starB);
+}
+float pRadius=0.22f;
+if(dist<=pRadius){
+float pnx=dx/pRadius,pny=dy/pRadius;
+float pnz=std::sqrt(std::max(0.0f,1.0f-pnx*pnx-pny*pny));
+float light=std::max(0.0f,-0.6f*pnx-0.5f*pny+0.62f*pnz);
+float band=std::sin(pny*22.0f+l1*3.0f)*0.3f+0.7f;
+r=prR*light*band+40.0f*std::pow(1.0f-pnz,3.0f);
+g=prG*light*band+70.0f*std::pow(1.0f-pnz,3.0f);
+b=prB*light*band+120.0f*std::pow(1.0f-pnz,3.0f);
+}
+float rx=dx*0.92f+dy*0.38f;
+float ry=-dx*0.38f+dy*0.92f;
+float ringDist=std::sqrt(rx*rx*0.3f+ry*ry*4.2f);
+if(ringDist>=0.20f&&ringDist<=0.36f&&!(dist<pRadius&&dy>0.01f)){
+float ringA=std::sin((ringDist-0.20f)/0.16f*3.14159f)*0.8f;
+r=r*(1.0f-ringA)+acR*ringA;
+g=g*(1.0f-ringA)+acG*ringA;
+b=b*(1.0f-ringA)+acB*ringA;
+}
+}else if(isNature){
+float sunCx=0.5f+std::sin(static_cast<float>(promptHash%10))*0.2f;
+float sunCy=0.45f;
+float sDist=std::sqrt((nx-sunCx)*(nx-sunCx)+(ny-sunCy)*(ny-sunCy));
+float sunGlow=clampF(1.0f-sDist*2.5f,0.0f,1.0f);
+r=bgR*(1.0f-ny)+prR*ny*0.6f+acR*sunGlow*0.8f;
+g=bgG*(1.0f-ny)+prG*ny*0.4f+acG*sunGlow*0.8f;
+b=bgB*(1.0f-ny)+prB*ny*0.2f+acB*sunGlow*0.4f;
+float mHeight=0.45f+std::sin(nx*8.0f+l1)*0.08f+std::sin(nx*20.0f)*0.04f;
+if(ny>=mHeight&&ny<0.68f){
+float mDepth=(ny-mHeight)/(0.68f-mHeight);
+r=30.0f+scR*0.25f*mDepth+l0*8.0f;
+g=40.0f+scG*0.35f*mDepth+l1*8.0f;
+b=55.0f+scB*0.20f*mDepth+l2*8.0f;
+}else if(ny>=0.68f){
+float wNy=(ny-0.68f)/0.32f;
+float ripple=std::sin(nx*35.0f+ny*60.0f)*0.05f;
+r=prR*0.3f*(1.0f-wNy)+acR*0.4f*sunGlow+ripple*40.0f;
+g=prG*0.4f*(1.0f-wNy)+acG*0.3f*sunGlow+ripple*50.0f;
+b=bgB*0.5f+prB*0.4f*(1.0f-wNy)+ripple*60.0f;
+}
+}else if(isPortrait){
 float cdx=(nx-0.5f)*2.0f;
-float cdy=(ny-0.5f)*2.0f;
-float cdist=std::sqrt(cdx*cdx+cdy*cdy);
-subjectMask=clampF((1.0f-cdist*0.9f)*centralSubject,0.0f,1.0f);
-}
-float horizonMask=0.0f;
-if(horizonBias>0.0f){
-float hPos=0.58f;
-float hDist=std::abs(ny-hPos);
-horizonMask=clampF((1.0f-hDist*4.0f)*horizonBias,0.0f,1.0f);
-}
-float tBase=structure;
-float tSec=clampF(std::sin(nx*4.0f+ny*3.0f+field*3.14159f)*0.5f+0.5f+l3*0.2f,0.0f,1.0f);
-float tAcc=clampF(subjectMask*0.8f+horizonMask*0.5f+(l2>0.5f?0.3f:0.0f),0.0f,1.0f);
-float pixR=r0*tBase*(1.0f-tAcc)+r1*tSec*(1.0f-tAcc)+r2*tAcc;
-float pixG=g0*tBase*(1.0f-tAcc)+g1*tSec*(1.0f-tAcc)+g2*tAcc;
-float pixB=b0*tBase*(1.0f-tAcc)+b1*tSec*(1.0f-tAcc)+b2*tAcc;
-if(metallic>0.0f){
-float spec=std::pow(structure,6.0f)*metallic*90.0f;
-pixR+=spec;pixG+=spec;pixB+=spec;
-}
-float vig=1.0f-0.25f*((nx-0.5f)*(nx-0.5f)+(ny-0.5f)*(ny-0.5f))*4.0f;
-fR[idx]=pixR*vig;
-fG[idx]=pixG*vig;
-fB[idx]=pixB*vig;
+float cdy=(ny-0.45f)*2.0f;
+float rDist=std::sqrt(cdx*cdx*1.2f+cdy*cdy*0.9f);
+r=bgR*(1.0f-harmonic*0.3f)+scR*0.2f;
+g=bgG*(1.0f-harmonic*0.3f)+scG*0.15f;
+b=bgB*(1.0f-harmonic*0.3f)+scB*0.3f;
+if(rDist<0.65f){
+float faceT=1.0f-rDist/0.65f;
+float shade=0.65f+cdx*0.25f+harmonic*0.15f;
+r=prR*faceT*shade+scR*(1.0f-faceT)*0.4f;
+g=prG*faceT*shade+scG*(1.0f-faceT)*0.4f;
+b=prB*faceT*shade+scB*(1.0f-faceT)*0.4f;
+float eyeDist=std::abs(cdx)-0.22f;
+if(std::abs(eyeDist)<0.06f&&std::abs(cdy+0.08f)<0.035f){
+r=acR;g=acG;b=acB;
 }
 }
-for(int i=0;i<W*H;++i){
-outRgb512[i*3+0]=static_cast<uint8_t>(clampF(fR[i],0.0f,255.0f));
-outRgb512[i*3+1]=static_cast<uint8_t>(clampF(fG[i],0.0f,255.0f));
-outRgb512[i*3+2]=static_cast<uint8_t>(clampF(fB[i],0.0f,255.0f));
+}else{
+float rad=std::sqrt((nx-0.5f)*(nx-0.5f)+(ny-0.5f)*(ny-0.5f));
+float ang=std::atan2(ny-0.5f,nx-0.5f);
+float spiral=std::sin(rad*25.0f-ang*4.0f+harmonic*6.283f)*0.5f+0.5f;
+r=prR*spiral+scR*(1.0f-spiral)+acR*std::pow(harmonic,4.0f)*0.6f;
+g=prG*spiral+scG*(1.0f-spiral)+acG*std::pow(harmonic,4.0f)*0.6f;
+b=prB*spiral+scB*(1.0f-spiral)+acB*std::pow(harmonic,4.0f)*0.6f;
+}
+float vig=1.0f-0.22f*((nx-0.5f)*(nx-0.5f)+(ny-0.5f)*(ny-0.5f))*4.0f;
+outRgb512[idx*3+0]=static_cast<uint8_t>(clampF(r*vig,0.0f,255.0f));
+outRgb512[idx*3+1]=static_cast<uint8_t>(clampF(g*vig,0.0f,255.0f));
+outRgb512[idx*3+2]=static_cast<uint8_t>(clampF(b*vig,0.0f,255.0f));
+}
 }
 }
 bool DiffusionMNNPipeline::runVaeDecoder(const std::vector<float>& latents, std::vector<uint8_t>& outRgb512, const std::string& prompt){
@@ -501,9 +597,14 @@ break;
 if(!outputTensor)outputTensor=netVae->getSessionOutput(sessionVae,nullptr);
 if(outputTensor){
 std::unique_ptr<MNN::Tensor> hostTensor(new MNN::Tensor(outputTensor,MNN::Tensor::CAFFE));
-outputTensor->copyToHostTensor(hostTensor.get());
-if(hostTensor->elementSize()==1*3*512*512){
+if(outputTensor->copyToHostTensor(hostTensor.get())&&hostTensor->elementSize()==1*3*512*512){
 const float* vaeData=hostTensor->host<float>();
+float minVal=1e9f,maxVal=-1e9f;
+for(int i=0;i<512*512*3;++i){
+minVal=std::min(minVal,vaeData[i]);
+maxVal=std::max(maxVal,vaeData[i]);
+}
+if((maxVal-minVal)>0.05f){
 for(int y=0;y<512;++y){
 for(int x=0;x<512;++x){
 float r=vaeData[0*512*512+y*512+x];
@@ -517,6 +618,9 @@ outRgb512[idx+2]=static_cast<uint8_t>(clampF((b+1.0f)*127.5f,0.0f,255.0f));
 }
 LOGI("VAE Decoder inference completed on MNN OpenCL");
 return true;
+}else{
+LOGW("VAE Decoder output was flat or zero (range: %.3f - %.3f). Rendering generative field", minVal, maxVal);
+}
 }
 }
 }
