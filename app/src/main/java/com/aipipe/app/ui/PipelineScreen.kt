@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aipipe.app.PipelineStep
 import com.aipipe.app.PipelineUiState
 import com.aipipe.app.PipelineViewModel
 import com.aipipe.app.ui.theme.*
